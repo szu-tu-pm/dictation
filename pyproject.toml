@@ -1,0 +1,21 @@
+[project]
+name = "dictation"
+version = "0.1.0"
+description = "Windows hold-to-talk dictation with local whisper.cpp (Vulkan)"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+    "sounddevice>=0.5",
+    "pystray>=0.19",
+    "pillow>=10.0",
+]
+
+[project.scripts]
+dictation = "dictation.app:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
