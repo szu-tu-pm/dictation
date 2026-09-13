@@ -225,7 +225,7 @@ def _wm_paste(hwnd: int, timeout_ms: int = 200) -> bool:
     return bool(sent)
 
 
-def _send_unicode(text: str) -> None:
+def _send_unicode(text: str) -> int:
     chars: list[int] = []
     normalized = text.replace("\r\n", "\n").replace("\n", "\r")
     for ch in normalized:
@@ -239,6 +239,8 @@ def _send_unicode(text: str) -> None:
         else:
             chars.append(code)
     n = len(chars) * 2
+    if n == 0:
+        return 0
     arr = (INPUT * n)()
     for i, code in enumerate(chars):
         down = arr[i * 2]
@@ -251,7 +253,7 @@ def _send_unicode(text: str) -> None:
         up.ki.wVk = 0
         up.ki.wScan = code
         up.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-    user32.SendInput(n, arr, sizeof(INPUT))
+    return int(user32.SendInput(n, arr, sizeof(INPUT)))
 
 
 def _send_ctrl_v() -> None:
@@ -282,7 +284,16 @@ def _wait_paste_consumed(timeout: float = 0.25) -> None:
 
 
 def paste_text(text: str) -> None:
-    """Insert text into the focused control, then restore the previous clipboard."""
+    """Insert text via Unicode SendInput first; clipboard paste only as fallback."""
+    try:
+        sent = _send_unicode(text)
+        if sent:
+            LOG.info("pasted via Unicode SendInput (%s events)", sent)
+            return
+        LOG.warning("Unicode SendInput returned 0; falling back to clipboard")
+    except Exception:
+        LOG.exception("Unicode SendInput failed; falling back to clipboard")
+
     snapshot = _snapshot()
     try:
         _set_text(text)
@@ -290,17 +301,12 @@ def paste_text(text: str) -> None:
         if _wm_paste(hwnd):
             LOG.info("pasted via WM_PASTE hwnd=%s", hwnd)
             return
-        LOG.warning("WM_PASTE failed or timed out; trying Unicode SendInput")
-        _send_unicode(text)
+        LOG.warning("WM_PASTE failed or timed out; trying Ctrl+V")
+        _send_ctrl_v()
+        _wait_paste_consumed()
     except Exception:
-        LOG.exception("paste failed; attempting Ctrl+V last resort")
-        try:
-            _set_text(text)
-            _send_ctrl_v()
-            _wait_paste_consumed()
-        except Exception:
-            LOG.exception("Ctrl+V last resort failed")
-            raise
+        LOG.exception("clipboard paste failed")
+        raise
     finally:
         try:
             _restore(snapshot)

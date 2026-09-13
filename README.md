@@ -15,7 +15,7 @@ First run downloads a Vulkan `whisper.cpp` build (~18 MB) and `ggml-large-v3-tur
 ## Install
 
 ```powershell
-cd C:\Users\gregs\Dictation
+cd path\to\dictation
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
@@ -45,7 +45,7 @@ Accidental taps shorter than ~200 ms, or near-silent captures, are ignored.
 
 ## How paste works
 
-The previous clipboard is snapshotted, the transcript is set, then `SendMessageTimeout(WM_PASTE)` is sent to the focused control. The snapshot is restored after that call returns. If `WM_PASTE` fails, Unicode `SendInput` is used. Ctrl+V plus a sleep is not the primary path (Electron apps would paste the old clipboard).
+Unicode `SendInput` is tried first (no clipboard). If that returns zero events or fails, the previous clipboard is snapshotted, the transcript is set, then `SendMessageTimeout(WM_PASTE)` is sent to the focused control. If `WM_PASTE` fails, Ctrl+V is used. The clipboard snapshot is restored in a `finally` block after the clipboard path.
 
 ## Config
 
@@ -57,6 +57,7 @@ The previous clipboard is snapshotted, the transcript is set, then `SendMessageT
 | `device` | `null` | WASAPI input index, or default |
 | `preroll_ms` | `200` | Audio kept from before key-down |
 | `suffix_ms` | `80` | Extra audio after key-up |
+| `max_record_seconds` | `60` | Auto-release if hold exceeds this |
 | `energy_threshold` | `0.008` | Drop near-silent takes |
 | `model_filename` | `ggml-large-v3-turbo.bin` | ggml file under `models\` |
 
@@ -64,8 +65,8 @@ Logs: `%APPDATA%\Dictation\dictation.log`. The tray status string includes `vulk
 
 ## Verification
 
-- Hold Right Ctrl in Notepad, speak a sentence, confirm the text appears, confirm the **previous clipboard is restored**, confirm a short tap does not paste junk.
+- Hold Right Ctrl in Notepad, speak a sentence, confirm the text appears, confirm a short tap does not paste junk.
 - Confirm Right Ctrl does **not** trigger Ctrl+S while talking; Left Ctrl+S still saves.
 - Confirm Discord/Zoom can use the mic at the same time.
 - Confirm the tray tooltip shows **vulkan** (not cpu) on a 7900 XTX.
-- Paste into a sluggish Electron app (VS Code or Slack) and confirm the transcript lands, not the old clipboard.
+- Paste into a sluggish Electron app (VS Code or Slack) and confirm the transcript lands.

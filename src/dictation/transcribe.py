@@ -4,7 +4,6 @@ from ctypes import (
     CFUNCTYPE,
     POINTER,
     Structure,
-    WinDLL,
     c_bool,
     c_char_p,
     c_float,
@@ -17,8 +16,10 @@ from ctypes import (
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import wave
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -27,7 +28,11 @@ from dictation.logutil import LOG
 from dictation.paths import tmp_dir
 from dictation.text import is_ghost, strip_fillers
 
+if TYPE_CHECKING:
+    from ctypes import WinDLL
+
 WHISPER_SAMPLING_GREEDY = 0
+CREATE_NO_WINDOW = 0x08000000
 
 LogCallback = CFUNCTYPE(None, c_int, c_char_p, c_void_p)
 
@@ -41,6 +46,20 @@ def _as_addr(ptr: int | c_void_p | None) -> int:
     if not value:
         raise RuntimeError("null pointer")
     return int(value)
+
+
+def _path_for_fopen(path: Path) -> bytes:
+    """Bytes path suitable for C fopen / whisper_init_from_file (short path on Win32)."""
+    s = str(path)
+    if sys.platform == "win32":
+        from ctypes import create_unicode_buffer, windll
+
+        need = windll.kernel32.GetShortPathNameW(s, None, 0)
+        if need:
+            buf = create_unicode_buffer(need)
+            if windll.kernel32.GetShortPathNameW(s, buf, need):
+                return buf.value.encode("utf-8")
+    return s.encode("utf-8")
 
 
 class WhisperContextParams(Structure):
@@ -174,7 +193,7 @@ class _DllEngine:
         self.model_path = model_path
         self.cfg = cfg
         self.backend = "cpu"
-        self._dll: WinDLL | None = None
+        self._dll: Any | None = None
         self._ctx = c_void_p()
         self._log_cb = None
         self._lang = create_string_buffer(cfg.language.encode("ascii") or b"en")
@@ -189,7 +208,9 @@ class _DllEngine:
         self._logs.append(line)
         LOG.info("whisper: %s", line)
 
-    def _bind(self) -> WinDLL:
+    def _bind(self) -> Any:
+        from ctypes import WinDLL
+
         os.add_dll_directory(str(self.engine_dir))
         dll = WinDLL(str(self.engine_dir / "whisper.dll"))
         dll.whisper_log_set.argtypes = [LogCallback, c_void_p]
@@ -221,7 +242,7 @@ class _DllEngine:
         overlay.gpu_device = 0
         try:
             ctx = self._dll.whisper_init_from_file_with_params(
-                str(self.model_path).encode("utf-8"), params_ptr
+                _path_for_fopen(self.model_path), params_ptr
             )
         finally:
             self._dll.whisper_free_context_params(params_ptr)
@@ -341,15 +362,17 @@ class _CliEngine:
                 cmd.append("-ng")
                 self.backend = "cli-cpu"
             LOG.info("running %s", " ".join(cmd))
-            proc = subprocess.run(
-                cmd,
-                cwd=str(self.exe.parent),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=120,
-            )
+            kwargs: dict[str, Any] = {
+                "cwd": str(self.exe.parent),
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "timeout": 120,
+            }
+            if sys.platform == "win32":
+                kwargs["creationflags"] = CREATE_NO_WINDOW
+            proc = subprocess.run(cmd, **kwargs)
             if proc.stderr:
                 LOG.info("whisper-cli stderr: %s", proc.stderr[-2000:])
                 if "vulkan" in proc.stderr.lower() and use_gpu:

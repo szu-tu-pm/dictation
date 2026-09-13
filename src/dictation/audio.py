@@ -16,6 +16,7 @@ class RingBuffer:
         self.buf = np.zeros(self.n, dtype=np.float32)
         self._lock = threading.Lock()
         self.total = 0
+        self.truncation_events = 0
 
     def write(self, samples: np.ndarray) -> None:
         x = np.ascontiguousarray(samples, dtype=np.float32).reshape(-1)
@@ -35,7 +36,12 @@ class RingBuffer:
     def copy_abs(self, start_abs: int, end_abs: int) -> np.ndarray:
         with self._lock:
             end_abs = min(end_abs, self.total)
-            start_abs = max(start_abs, max(0, self.total - self.n))
+            earliest = max(0, self.total - self.n)
+            if start_abs < earliest:
+                self.truncation_events += 1
+                start_abs = earliest
+            else:
+                start_abs = max(start_abs, earliest)
             n = end_abs - start_abs
             if n <= 0:
                 return np.zeros(0, dtype=np.float32)
@@ -46,6 +52,29 @@ class RingBuffer:
             if first < n:
                 out[first:] = self.buf[: n - first]
             return out
+
+    def grow_to(self, seconds: float, samplerate: int) -> None:
+        new_n = max(int(seconds * samplerate), samplerate)
+        with self._lock:
+            if new_n <= self.n:
+                return
+            available = min(self.total, self.n)
+            new_buf = np.zeros(new_n, dtype=np.float32)
+            if available > 0:
+                start_abs = self.total - available
+                src = start_abs % self.n
+                ordered = np.empty(available, dtype=np.float32)
+                first = min(available, self.n - src)
+                ordered[:first] = self.buf[src : src + first]
+                if first < available:
+                    ordered[first:] = self.buf[: available - first]
+                dest = start_abs % new_n
+                first_d = min(available, new_n - dest)
+                new_buf[dest : dest + first_d] = ordered[:first_d]
+                if first_d < available:
+                    new_buf[: available - first_d] = ordered[first_d:]
+            self.buf = new_buf
+            self.n = new_n
 
     @property
     def write_total(self) -> int:
@@ -83,6 +112,8 @@ class AudioCapture:
         self.ring = RingBuffer(cfg.ring_seconds, cfg.sample_rate)
         self._stream: sd.InputStream | None = None
         self._mark: int | None = None
+        self._pa_status = 0
+        self._pa_status_count = 0
         self.device = find_wasapi_input(cfg.device)
         info = sd.query_devices(self.device)
         LOG.info(
@@ -94,8 +125,16 @@ class AudioCapture:
 
     def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
         if status:
-            LOG.warning("PortAudio status: %s", status)
+            self._pa_status = int(status)
+            self._pa_status_count += 1
         self.ring.write(indata[:, 0])
+
+    def drain_portaudio_status(self) -> int | None:
+        if self._pa_status_count == 0:
+            return None
+        status = self._pa_status
+        self._pa_status_count = 0
+        return status
 
     def start(self) -> None:
         extra: sd.WasapiSettings
@@ -125,6 +164,10 @@ class AudioCapture:
             self._stream = None
 
     def mark_start(self) -> None:
+        self.ring.grow_to(
+            max(self.cfg.ring_seconds, self.cfg.max_record_seconds + 2),
+            self.cfg.sample_rate,
+        )
         preroll = int(self.cfg.sample_rate * self.cfg.preroll_ms / 1000)
         self._mark = max(0, self.ring.write_total - preroll)
 
@@ -134,4 +177,11 @@ class AudioCapture:
             time.sleep(self.cfg.suffix_ms / 1000)
         start = 0 if self._mark is None else self._mark
         self._mark = None
-        return self.ring.copy_abs(start, self.ring.write_total)
+        before = self.ring.truncation_events
+        samples = self.ring.copy_abs(start, self.ring.write_total)
+        if self.ring.truncation_events > before:
+            LOG.warning(
+                "audio slice truncated (mark fell outside ring; lost %s event(s))",
+                self.ring.truncation_events - before,
+            )
+        return samples
