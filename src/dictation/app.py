@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import queue
 import threading
+import time
 from enum import Enum
 
 import pystray
@@ -10,7 +11,7 @@ import pystray
 from dictation.assets import ensure_engine, ensure_model
 from dictation.audio import AudioCapture, find_wasapi_input
 from dictation.config import load_config
-from dictation.hotkey import RightCtrlHook
+from dictation.hotkey import RightCtrlHook, right_ctrl_physically_down
 from dictation.icons import tray_icon
 from dictation.logutil import LOG, setup_logging
 from dictation.paste import paste_text
@@ -34,6 +35,7 @@ class DictationApp:
         self.state = State.STARTING
         self.status = "Starting…"
         self.backend = "unknown"
+        self._lock = threading.RLock()
         self._ptt: queue.Queue[str] = queue.Queue()
         self._jobs: queue.Queue[object] = queue.Queue()
         self._stop = threading.Event()
@@ -43,12 +45,19 @@ class DictationApp:
         self.icon: pystray.Icon | None = None
         self._coord: threading.Thread | None = None
         self._worker: threading.Thread | None = None
+        self._error_gen = 0
+        self._progress_last_pct = -1
+        self._progress_last_ts = 0.0
+        self._record_started = 0.0
+        self._phys_up_ticks = 0
 
-    def _set_state(self, state: State, status: str) -> None:
-        self.state = state
-        self.status = status
-        LOG.info("state=%s %s", state.value, status)
-        self._refresh_icon()
+    def _set_state(self, state: State, status: str, *, log: bool = True) -> None:
+        with self._lock:
+            self.state = state
+            self.status = status
+            if log:
+                LOG.info("state=%s %s", state.value, status)
+            self._refresh_icon()
 
     def _refresh_icon(self) -> None:
         if self.icon is None:
@@ -77,12 +86,29 @@ class DictationApp:
         )
 
     def _on_progress(self, label: str, got: int, total: int) -> None:
+        now = time.monotonic()
         if total > 0:
             pct = int(got * 100 / total)
+            with self._lock:
+                last_pct = self._progress_last_pct
+                last_ts = self._progress_last_ts
+                if (pct - last_pct) < 1 and (now - last_ts) < 0.5:
+                    return
+                log_progress = last_pct < 0 or (pct // 5) != (last_pct // 5) or pct >= 100
+                self._progress_last_pct = pct
+                self._progress_last_ts = now
             mb = got / (1024 * 1024)
             tot = total / (1024 * 1024)
-            self._set_state(State.DOWNLOADING, f"Downloading {label} {pct}% ({mb:.0f}/{tot:.0f} MB)")
+            self._set_state(
+                State.DOWNLOADING,
+                f"Downloading {label} {pct}% ({mb:.0f}/{tot:.0f} MB)",
+                log=log_progress,
+            )
         else:
+            with self._lock:
+                if (now - self._progress_last_ts) < 0.5:
+                    return
+                self._progress_last_ts = now
             self._set_state(State.DOWNLOADING, f"Downloading {label}…")
 
     def _on_press(self) -> None:
@@ -91,34 +117,74 @@ class DictationApp:
     def _on_release(self) -> None:
         self._ptt.put("release")
 
+    def _recover_from_error(self, gen: int) -> None:
+        with self._lock:
+            if self._error_gen != gen or self.state is not State.ERROR:
+                return
+            self._set_state(State.IDLE, f"Idle ({self.backend})")
+
     def _coordinator(self) -> None:
         while not self._stop.is_set():
+            if self.audio is not None:
+                pa = self.audio.drain_portaudio_status()
+                if pa is not None:
+                    LOG.warning("PortAudio status: %s", pa)
+
+            with self._lock:
+                recording = self.state is State.RECORDING
+            if recording and self.hook is not None:
+                elapsed = time.monotonic() - self._record_started
+                if elapsed >= self.cfg.max_record_seconds:
+                    self._phys_up_ticks = 0
+                    self.hook.force_release("max_record_seconds")
+                elif self.hook.down and not right_ctrl_physically_down():
+                    # Require two consecutive ticks (~100ms) so a normal key-up
+                    # that beats the hook callback by a millisecond is not logged
+                    # as force_release.
+                    self._phys_up_ticks += 1
+                    if self._phys_up_ticks >= 2:
+                        self._phys_up_ticks = 0
+                        self.hook.force_release("right_ctrl_physically_up")
+                else:
+                    self._phys_up_ticks = 0
+            else:
+                self._phys_up_ticks = 0
+
             try:
-                ev = self._ptt.get(timeout=0.2)
+                ev = self._ptt.get(timeout=0.05)
             except queue.Empty:
                 continue
             if ev == "press":
-                if self.state is not State.IDLE or self.engine is None or not self.engine.ready:
-                    continue
-                if self.audio is None:
-                    continue
-                self.audio.mark_start()
-                self._set_state(State.RECORDING, "Recording")
+                with self._lock:
+                    if self.state is not State.IDLE or self.engine is None or not self.engine.ready:
+                        continue
+                    if self.audio is None:
+                        continue
+                    self.audio.mark_start()
+                    self._record_started = time.monotonic()
+                    self._phys_up_ticks = 0
+                    self._set_state(State.RECORDING, "Recording")
             elif ev == "release":
-                if self.state is not State.RECORDING or self.audio is None:
-                    continue
-                self._set_state(State.TRANSCRIBING, "Transcribing…")
-                samples = self.audio.take_slice()
-                self._jobs.put(samples)
+                with self._lock:
+                    if self.state is not State.RECORDING or self.audio is None:
+                        continue
+                    self._phys_up_ticks = 0
+                    self._set_state(State.TRANSCRIBING, "Transcribing…")
+                self._jobs.put("slice")
 
     def _worker(self) -> None:
         while not self._stop.is_set():
             try:
-                samples = self._jobs.get(timeout=0.2)
+                job = self._jobs.get(timeout=0.2)
             except queue.Empty:
                 continue
             try:
                 assert self.engine is not None
+                assert self.audio is not None
+                if job == "slice":
+                    samples = self.audio.take_slice()
+                else:
+                    samples = job  # type: ignore[assignment]
                 text = self.engine.transcribe(samples)  # type: ignore[arg-type]
                 if text:
                     LOG.info("transcript: %s", text)
@@ -127,8 +193,11 @@ class DictationApp:
                     LOG.info("nothing to paste")
             except Exception:
                 LOG.exception("transcribe/paste failed")
-                self._set_state(State.ERROR, "Error — see log")
-                threading.Timer(2.0, lambda: self._set_state(State.IDLE, f"Idle ({self.backend})")).start()
+                with self._lock:
+                    self._error_gen += 1
+                    gen = self._error_gen
+                    self._set_state(State.ERROR, "Error — see log")
+                threading.Timer(2.0, self._recover_from_error, args=(gen,)).start()
                 continue
             if not self._stop.is_set():
                 self._set_state(State.IDLE, f"Idle ({self.backend})")
@@ -137,13 +206,24 @@ class DictationApp:
         try:
             self._set_state(State.DOWNLOADING, "Checking engine…")
             engine_dir = ensure_engine(self.cfg, self._on_progress)
+            if self._stop.is_set():
+                return
             model_path = ensure_model(self.cfg, self._on_progress)
+            if self._stop.is_set():
+                return
             self._set_state(State.LOADING, "Loading model…")
             self.engine = WhisperEngine(engine_dir, model_path, self.cfg)
             self.engine.load()
+            if self._stop.is_set():
+                return
             self.backend = self.engine.backend
+            if self.hook is None:
+                self.hook = RightCtrlHook(self._on_press, self._on_release)
+            self.hook.start()
             self._set_state(State.IDLE, f"Idle ({self.backend})")
         except Exception as exc:
+            if self._stop.is_set():
+                return
             LOG.exception("startup failed")
             self._set_state(State.ERROR, f"Error: {exc}")
 
@@ -166,7 +246,6 @@ class DictationApp:
         self.audio = AudioCapture(self.cfg)
         self.audio.start()
         self.hook = RightCtrlHook(self._on_press, self._on_release)
-        self.hook.start()
         self._coord = threading.Thread(target=self._coordinator, name="ptt", daemon=True)
         self._worker = threading.Thread(target=self._worker, name="stt", daemon=True)
         self._coord.start()
