@@ -62,10 +62,6 @@ The previous clipboard is snapshotted, the transcript is set, then `SendMessageT
 
 Logs: `%APPDATA%\Dictation\dictation.log`. The tray status string includes `vulkan` or `cpu` after the model loads. On this AMD GPU it should say **Idle (vulkan)**.
 
-## Verification
+## Testing
 
-- Hold Right Ctrl in Notepad, speak a sentence, confirm the text appears, confirm the **previous clipboard is restored**, confirm a short tap does not paste junk.
-- Confirm Right Ctrl does **not** trigger Ctrl+S while talking; Left Ctrl+S still saves.
-- Confirm Discord/Zoom can use the mic at the same time.
-- Confirm the tray tooltip shows **vulkan** (not cpu) on a 7900 XTX.
-- Paste into a sluggish Electron app (VS Code or Slack) and confirm the transcript lands, not the old clipboard.
+See [TESTING.md](TESTING.md) for setup, the automated suite (`pytest`), and the manual hold-to-talk checklist.
