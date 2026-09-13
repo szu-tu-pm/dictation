@@ -8,14 +8,10 @@ SPACE_RE = re.compile(r"[ \t]{2,}")
 GHOSTS = {
     "thanks for watching",
     "thank you for watching",
-    "thank you",
-    "thanks",
-    "you",
-    "the",
     "subtitle",
     "subtitles by",
-    "thanks for watching.",
-    ".",
+    "subtitles by the amara org",
+    "please subscribe",
 }
 
 
@@ -27,7 +23,8 @@ def strip_fillers(text: str) -> str:
 
 
 def is_ghost(text: str) -> bool:
-    normalized = re.sub(r"[^\w\s]", "", text.lower()).strip()
+    normalized = re.sub(r"[^\w\s]", " ", text.lower())
+    normalized = SPACE_RE.sub(" ", normalized).strip()
     if not normalized:
         return True
     return normalized in GHOSTS

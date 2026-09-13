@@ -32,6 +32,8 @@ user32.GetMessageW.argtypes = [POINTER(wintypes.MSG), wintypes.HWND, wintypes.UI
 user32.TranslateMessage.argtypes = [POINTER(wintypes.MSG)]
 user32.DispatchMessageW.argtypes = [POINTER(wintypes.MSG)]
 user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetAsyncKeyState.restype = wintypes.SHORT
 kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
@@ -59,6 +61,11 @@ def _is_right_ctrl(data: KBDLLHOOKSTRUCT) -> bool:
     return False
 
 
+def right_ctrl_physically_down() -> bool:
+    """True if Right Ctrl is currently down according to GetAsyncKeyState."""
+    return bool(user32.GetAsyncKeyState(VK_RCONTROL) & 0x8000)
+
+
 class RightCtrlHook:
     """Low-level hook that swallows Right Ctrl and never Left Ctrl."""
 
@@ -66,11 +73,28 @@ class RightCtrlHook:
         self._on_press = on_press
         self._on_release = on_release
         self._down = False
+        self._down_lock = threading.Lock()
         self._hook = None
         self._thread: threading.Thread | None = None
         self._thread_id = 0
         self._proc = HOOKPROC(self._ll_proc)
         self._ready = threading.Event()
+
+    @property
+    def down(self) -> bool:
+        with self._down_lock:
+            return self._down
+
+    def force_release(self, reason: str) -> bool:
+        """Synthesize on_release if hook still thinks Right Ctrl is down."""
+        with self._down_lock:
+            if not self._down:
+                return False
+            self._down = False
+        # Normal releases can race the hook by a tick; keep this informational.
+        LOG.info("force_release Right Ctrl: %s", reason)
+        self._on_release()
+        return True
 
     def _ll_proc(self, ncode: int, wparam: int, lparam: int) -> int:
         try:
@@ -79,12 +103,21 @@ class RightCtrlHook:
                 if _is_right_ctrl(data):
                     going_up = bool(data.flags & LLKHF_UP)
                     if going_up:
-                        if self._down:
-                            self._down = False
+                        fire = False
+                        with self._down_lock:
+                            if self._down:
+                                self._down = False
+                                fire = True
+                        if fire:
                             self._on_release()
-                    elif not self._down:
-                        self._down = True
-                        self._on_press()
+                    else:
+                        fire = False
+                        with self._down_lock:
+                            if not self._down:
+                                self._down = True
+                                fire = True
+                        if fire:
+                            self._on_press()
                     return 1
         except Exception:
             LOG.exception("keyboard hook callback failed")
