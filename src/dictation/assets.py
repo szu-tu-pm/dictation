@@ -37,9 +37,14 @@ def _safe_extract(zip_path: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as zf:
         for info in zf.infolist():
-            target = (dest / info.filename).resolve()
-            if not str(target).startswith(str(dest)):
+            name = info.filename.replace("\\", "/")
+            if any(part == ".." for part in Path(name).parts):
                 raise ValueError(f"refusing zip path {info.filename!r}")
+            target = (dest / name).resolve()
+            try:
+                target.relative_to(dest)
+            except ValueError as exc:
+                raise ValueError(f"refusing zip path {info.filename!r}") from exc
         zf.extractall(dest)
 
 

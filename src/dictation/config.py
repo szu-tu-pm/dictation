@@ -31,6 +31,7 @@ class AppConfig:
     min_hold_ms: int = 200
     energy_threshold: float = 0.008
     ring_seconds: float = 30.0
+    max_record_seconds: float = 60.0
     engine_url: str = ENGINE_ZIP_URL
     model_url: str = MODEL_URL
     model_filename: str = MODEL_FILENAME
@@ -42,7 +43,16 @@ def load_config() -> AppConfig:
         cfg = AppConfig()
         save_config(cfg)
         return cfg
-    raw: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        cfg = AppConfig()
+        save_config(cfg)
+        return cfg
+    if not isinstance(raw, dict):
+        cfg = AppConfig()
+        save_config(cfg)
+        return cfg
     allowed = {f.name for f in fields(AppConfig)}
     filtered = {k: v for k, v in raw.items() if k in allowed}
     return AppConfig(**filtered)
