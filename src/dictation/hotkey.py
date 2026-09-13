@@ -91,7 +91,8 @@ class RightCtrlHook:
             if not self._down:
                 return False
             self._down = False
-        LOG.warning("force_release Right Ctrl: %s", reason)
+        # Normal releases can race the hook by a tick; keep this informational.
+        LOG.info("force_release Right Ctrl: %s", reason)
         self._on_release()
         return True
 
