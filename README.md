@@ -6,46 +6,80 @@ This is a personal Windows utility. The microphone stays open in **WASAPI shared
 
 ## Requirements
 
-- Windows 10/11, Python 3.11+
-- A microphone allowed for Python / Terminal under **Settings → Privacy → Microphone**
-- For GPU transcription: current AMD/NVIDIA/Intel drivers with **Vulkan** (this box: Radeon RX 7900 XTX)
+- Windows 10/11 (64-bit)
+- Python 3.11+ (`winget install Python.Python.3.12`)
+- [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) (`winget install Microsoft.VCRedist.2015+.x64`)
+- A microphone enabled under Windows **Settings → Privacy & security → Microphone** (allow desktop apps)
+- For GPU transcription: modern AMD/NVIDIA/Intel graphics drivers with **Vulkan** support
 
-First run downloads a Vulkan `whisper.cpp` build (~18 MB) and `ggml-large-v3-turbo` (~1.6 GB) into `%APPDATA%\Dictation\`.
+> [!NOTE]
+> On first run, the app automatically downloads the Vulkan `whisper.cpp` engine (~18 MB) and the `ggml-large-v3-turbo` model (~1.6 GB) into `%APPDATA%\Dictation\`.
 
-## Install
+---
+
+## Quick Install
+
+Open **PowerShell** in the project directory:
 
 ```powershell
-cd path\to\dictation
+# 1. (Optional) If Python or VC++ Redistributable is missing:
+winget install Python.Python.3.12 --scope user
+winget install Microsoft.VCRedist.2015+.x64
+
+# 2. Allow PowerShell script execution for this session:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# 3. Create and activate virtual environment:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+
+# 4. Install package:
 pip install -e .
+
+# 5. Smoke-test audio and keyboard hook (no model download):
 python -m dictation --check
+
+# 6. Start dictation:
 python -m dictation
 ```
 
-`--check` confirms WASAPI capture and that the Right Ctrl hook can be installed. It does not download the model.
+*(Optional: install into a dedicated venv you keep on PATH, rather than your global interpreter)*.
+
+---
 
 ## Usage
 
-1. Focus Notepad (or any window that accepts paste).
-2. **Hold Right Ctrl** and speak.
-3. Release. After transcription the text is inserted at the caret.
-4. Tray tooltip shows Idle / Recording / Transcribing. **Quit** stops the app.
+1. Focus Notepad, VS Code, Discord, Slack, or any window that accepts text.
+2. **Hold Right Ctrl** and speak naturally.
+3. **Release Right Ctrl** — after a short transcription delay, text appears at the caret.
+4. Tray tooltip shows `Idle (vulkan)` / `Recording` / `Transcribing…`. Right-click the tray icon and choose **Quit** to stop.
 
-Right Ctrl is **swallowed** so it never reaches other programs. Brushing S or W while talking will not fire Save or Close Tab. **Left Ctrl is unchanged** — Left Ctrl+S still saves.
+**Key behavior:**
+- Right Ctrl is **swallowed** while held so it never reaches other programs. Typing S or W while talking will not trigger Save or Close Tab.
+- **Left Ctrl is untouched** — `Left Ctrl + S` still saves normally.
+- Accidental taps shorter than ~200 ms, or near-silent audio takes, are automatically ignored.
 
-Accidental taps shorter than ~200 ms, or near-silent captures, are ignored.
+---
 
-## Conflicts and limits
+## Testing
 
-- **VirtualBox:** the default host key is Right Ctrl. Change that host key in VirtualBox, or this app and the VM will fight.
-- **RDP:** dictate in the session that owns the hook. If dictation runs on the host, swallowed Right Ctrl will not reach the remote desktop.
-- **Elevated windows:** a non-elevated process cannot paste into an admin window (UIPI). Run dictation elevated only if you need that, or paste into a normal window.
-- **Always-on mic:** capture runs for as long as the tray icon exists. That is required for pre-roll. Quit the app to release the device. Shared WASAPI should still let Discord or Zoom use the same mic.
+To run the automated test suite (56 tests):
+
+```powershell
+pip install -e ".[test]"
+pytest -v
+```
+
+See [TESTING.md](TESTING.md) for the manual hardware checklist and test breakdown.
+
+
+---
 
 ## How paste works
 
-Unicode `SendInput` is tried first (no clipboard). If that returns zero events or fails, the previous clipboard is snapshotted, the transcript is set, then `SendMessageTimeout(WM_PASTE)` is sent to the focused control. If `WM_PASTE` fails, Ctrl+V is used. The clipboard snapshot is restored in a `finally` block after the clipboard path.
+Unicode `SendInput` is the primary path (typing characters directly at the caret). Your clipboard is **not touched or overwritten** on the happy path. If `SendInput` fails or is blocked, it falls back to snapshotting the previous clipboard, setting the transcript, sending `SendMessageTimeout(WM_PASTE)` or `Ctrl+V`, and restoring your previous clipboard in a `finally` block.
+
+---
 
 ## Config
 
@@ -53,20 +87,35 @@ Unicode `SendInput` is tried first (no clipboard). If that returns zero events o
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `language` | `en` | Whisper language |
-| `device` | `null` | WASAPI input index, or default |
-| `preroll_ms` | `200` | Audio kept from before key-down |
-| `suffix_ms` | `80` | Extra audio after key-up |
-| `max_record_seconds` | `60` | Auto-release if hold exceeds this |
-| `energy_threshold` | `0.008` | Drop near-silent takes |
+| `language` | `en` | Whisper language code (`en`, `de`, `fr`, `es`, etc.) |
+| `device` | `null` | WASAPI input index, or default microphone |
+| `preroll_ms` | `200` | Audio kept from before key-down (prevents first syllable clip) |
+| `suffix_ms` | `80` | Extra audio captured after key-up |
+| `max_record_seconds` | `60` | Auto-release watchdog if key hold exceeds this duration |
+| `energy_threshold` | `0.008` | RMS energy floor to drop silent takes |
 | `model_filename` | `ggml-large-v3-turbo.bin` | ggml file under `models\` |
 
-Logs: `%APPDATA%\Dictation\dictation.log`. The tray status string includes `vulkan` or `cpu` after the model loads. On this AMD GPU it should say **Idle (vulkan)**.
+Logs: `%APPDATA%\Dictation\dictation.log`.
 
-## Verification
+---
 
-- Hold Right Ctrl in Notepad, speak a sentence, confirm the text appears, confirm a short tap does not paste junk.
-- Confirm Right Ctrl does **not** trigger Ctrl+S while talking; Left Ctrl+S still saves.
-- Confirm Discord/Zoom can use the mic at the same time.
-- Confirm the tray tooltip shows **vulkan** (not cpu) on a 7900 XTX.
-- Paste into a sluggish Electron app (VS Code or Slack) and confirm the transcript lands.
+## Conflicts & Limits
+
+- **VirtualBox:** The default host key is Right Ctrl. Change the host key in VirtualBox preferences to avoid conflicts.
+- **RDP:** Run dictation in the session that owns the keyboard hook.
+- **Elevated / Admin Windows:** Standard user processes cannot send keystrokes to elevated Administrator windows (UIPI). Run dictation as Administrator only if you need to dictate into admin consoles.
+- **Always-on Mic:** WASAPI capture stays open in **shared mode** while the tray icon exists to provide pre-roll. Other apps like Discord and Zoom can use the microphone simultaneously.
+
+---
+
+## Troubleshooting & Common Setup Errors
+
+| Symptom / Error | Cause | Solution |
+| :--- | :--- | :--- |
+| `Python was not found...` | Windows Store app execution alias intercepted `python` | Install Python via `winget install Python.Python.3.12 --scope user` or disable aliases in *Settings → Apps → Advanced app settings → App execution aliases*. |
+| `FileNotFoundError: Could not find module ... whisper.dll (or one of its dependencies)` | Missing `VCOMP140.DLL` (Visual C++ OpenMP runtime) | Run `winget install Microsoft.VCRedist.2015+.x64`, click **Yes** on the UAC prompt, and restart `python -m dictation`. |
+| `Activate.ps1 cannot be loaded because running scripts is disabled` | PowerShell default script execution policy | Run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` before activating `.venv`. |
+| `No module named dictation` | Running global Python instead of the virtual environment | Run `.\.venv\Scripts\Activate.ps1` first, or run `pip install -e .` in your global Python. |
+| Tray tooltip says `Idle (cpu)` instead of `vulkan` | Missing Vulkan runtime / outdated graphics drivers | Update graphics drivers (AMD Adrenalin, NVIDIA GeForce, or Intel Arc). Verify Vulkan with `vulkaninfo`. |
+| `WASAPI host API not found` / No audio captured | Microphone privacy disabled or no default device | Enable microphone in Windows Settings under *Privacy & security → Microphone*, and verify your default device in Sound Settings. |
+
