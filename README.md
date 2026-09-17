@@ -7,8 +7,10 @@ This is a personal Windows utility. The microphone stays open in **WASAPI shared
 ## Requirements
 
 - Windows 10/11, Python 3.11+
+- [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe) (`winget install Microsoft.VCRedist.2015+.x64`)
 - A microphone allowed for Python / Terminal under **Settings → Privacy → Microphone**
 - For GPU transcription: current AMD/NVIDIA/Intel drivers with **Vulkan** (this box: Radeon RX 7900 XTX)
+
 
 First run downloads a Vulkan `whisper.cpp` build (~18 MB) and `ggml-large-v3-turbo` (~1.6 GB) into `%APPDATA%\Dictation\`.
 
