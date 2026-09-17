@@ -1,4 +1,4 @@
-﻿from ctypes import byref, pointer
+from ctypes import byref, pointer
 import sys
 from unittest.mock import MagicMock
 
@@ -78,29 +78,31 @@ def test_hook_force_release() -> None:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ctypes hook structs only")
 def test_hook_ll_proc_transitions() -> None:
+    import ctypes
+
     on_press = MagicMock()
     on_release = MagicMock()
     hook = RightCtrlHook(on_press, on_release)
 
     # Press Right Ctrl
     data_down = _make_kbd_struct(vk=VK_RCONTROL, flags=0)
-    ptr_down = pointer(data_down)
-    lparam_down = int(byref(data_down)._obj.value if hasattr(byref(data_down), '_obj') else pointer(data_down))
-    # Call internal proc
-    ret = hook._ll_proc(HC_ACTION, 0, pointer(data_down))
+    addr_down = ctypes.addressof(data_down)
+    ret = hook._ll_proc(HC_ACTION, 0, addr_down)
     assert ret == 1
     assert hook.down is True
     assert on_press.call_count == 1
 
     # Typematic repeat while held: down stays True, on_press not called again
-    ret = hook._ll_proc(HC_ACTION, 0, pointer(data_down))
+    ret = hook._ll_proc(HC_ACTION, 0, addr_down)
     assert ret == 1
     assert hook.down is True
     assert on_press.call_count == 1
 
     # Release Right Ctrl
     data_up = _make_kbd_struct(vk=VK_RCONTROL, flags=LLKHF_UP)
-    ret = hook._ll_proc(HC_ACTION, 0, pointer(data_up))
+    addr_up = ctypes.addressof(data_up)
+    ret = hook._ll_proc(HC_ACTION, 0, addr_up)
     assert ret == 1
     assert hook.down is False
     assert on_release.call_count == 1
+
