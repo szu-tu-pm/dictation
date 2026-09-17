@@ -29,10 +29,33 @@ Plug in or enable the mic you will talk into. Discord/Zoom can stay open; captur
 ```powershell
 cd path\to\dictation
 .\.venv\Scripts\Activate.ps1
-pytest
+
+# Run the complete test suite (unit tests and hardware checks)
+pytest -v
+
+# Run only pure unit tests (skips tests requiring mic or Windows hardware)
+pytest -m "not hardware"
+
+# Run tests with short traceback on failures
+pytest -v --tb=short
 ```
 
-This is fast and does **not** download the 1.6 GB model. It covers filler stripping, ghost transcripts, the audio ring buffer, config round-trip, zip-slip rejection, quiet-audio gating, tray icons, plus cheap Windows checks (WASAPI device present, Right Ctrl hook install/remove, clipboard restore, `whisper.dll` param overlay if the engine is already on disk).
+This suite runs quickly and does **not** download the 1.6 GB Whisper model. Test modules:
+
+| Test File | Scope & Logic Verified |
+| --- | --- |
+| `tests/test_text.py` | Filler stripping (`um`, `uh`), ghost transcript filtering (`thanks for watching`), punctuation formatting |
+| `tests/test_audio_ring.py` | Circular buffer wrap, sequence preservation, dynamic growth (`grow_to`), truncation counter, RMS & quiet gating |
+| `tests/test_config.py` | Config roundtrip save/load, default values, recovery from corrupted JSON and non-dict content |
+| `tests/test_paths.py` | Environment variable overrides (`APPDATA`), automatic creation of engine, models, and tmp directories |
+| `tests/test_hotkey.py` | `_is_right_ctrl` scancode and extended flag parsing, Left Ctrl isolation, `force_release` state transitions, typematic repeat handling |
+| `tests/test_paste.py` | Unicode `SendInput` primary path (no clipboard touches), emoji & surrogate pair support, newline normalization, reachable clipboard fallback |
+| `tests/test_app_state.py` | App lifecycle states (`STARTING` -> `IDLE` -> `RECORDING` -> `TRANSCRIBING`), error recovery generation counter, download progress throttling |
+| `tests/test_logutil.py` | Logging setup idempotency, formatting, and file handler initialization |
+| `tests/test_assets_zip.py` | Zip extraction safety, path traversal (Zip-Slip) rejection, engine readiness detection |
+| `tests/test_icons.py` | Tray icon generation across all 6 states (`idle`, `recording`, `transcribing`, etc.) |
+| `tests/test_transcribe_helpers.py` | Pointer addresses, Windows short path resolution (`_path_for_fopen`), silence gating |
+| `tests/test_hardware.py` | Windows smoke checks: WASAPI default input detection, Right Ctrl hook install/uninstall, clipboard restore, `whisper.dll` ABI struct overlay |
 
 Smoke the same hook/WASAPI path the app uses at startup:
 
