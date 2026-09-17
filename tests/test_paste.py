@@ -1,27 +1,29 @@
-﻿import sys
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import dictation.paste as paste_mod
-from dictation.paste import paste_text
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+
+if sys.platform == "win32":
+    import dictation.paste as paste_mod
+    from dictation.paste import paste_text
 
 
 def test_send_unicode_empty() -> None:
     assert paste_mod._send_unicode("") == 0
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows SendInput only")
 def test_send_unicode_surrogate_and_newlines() -> None:
-    # Test normalization logic by intercepting SendInput call
-    with patch.object(paste_mod.user32, "SendInput", return_value=12) as mock_send:
+    # Test normalization and event generation by intercepting SendInput
+    with patch.object(paste_mod.user32, "SendInput", side_effect=lambda n, arr, size: n) as mock_send:
         # String with newline and emoji (code > 0xFFFF)
         text = "Hello\nWorld\U0001F600"
         count = paste_mod._send_unicode(text)
-        assert count == 12
+        # 'Hello' (5) + '\r' (1) + 'World' (5) + emoji (2 utf-16 surrogate chars) = 13 chars * 2 = 26 events
+        assert count == 26
         assert mock_send.called
         n, arr, size = mock_send.call_args[0]
-        # 'Hello' (5) + '\r' (1) + 'World' (5) + emoji (2 utf-16 chars) = 13 chars * 2 = 26 events
         assert n == 26
 
 

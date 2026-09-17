@@ -33,20 +33,17 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# 4. Install package and test dependencies:
-pip install -e ".[test]"
+# 4. Install package:
+pip install -e .
 
 # 5. Smoke-test audio and keyboard hook (no model download):
 python -m dictation --check
 
-# 6. Run automated test suite:
-pytest -v
-
-# 7. Start dictation:
+# 6. Start dictation:
 python -m dictation
 ```
 
-*(Tip: You can also install globally via `pip install -e .` from your main Python environment to run `dictation` or `python -m dictation` from any terminal without activating `.venv`)*.
+*(Optional: install into a dedicated venv you keep on PATH, rather than your global interpreter)*.
 
 ---
 
@@ -54,13 +51,27 @@ python -m dictation
 
 1. Focus Notepad, VS Code, Discord, Slack, or any window that accepts text.
 2. **Hold Right Ctrl** and speak naturally.
-3. **Release Right Ctrl**: within ~0.5s the transcription is inserted at your caret.
+3. **Release Right Ctrl** — after a short transcription delay, text appears at the caret.
 4. Tray tooltip shows `Idle (vulkan)` / `Recording` / `Transcribing…`. Right-click the tray icon and choose **Quit** to stop.
 
 **Key behavior:**
 - Right Ctrl is **swallowed** while held so it never reaches other programs. Typing S or W while talking will not trigger Save or Close Tab.
 - **Left Ctrl is untouched** — `Left Ctrl + S` still saves normally.
 - Accidental taps shorter than ~200 ms, or near-silent audio takes, are automatically ignored.
+
+---
+
+## Testing
+
+To run the automated test suite (56 tests):
+
+```powershell
+pip install -e ".[test]"
+pytest -v
+```
+
+See [TESTING.md](TESTING.md) for the manual hardware checklist and test breakdown.
+
 
 ---
 

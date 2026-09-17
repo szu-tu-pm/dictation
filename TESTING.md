@@ -11,6 +11,15 @@ In PowerShell:
 
 ```powershell
 cd path\to\dictation
+
+# If Python or VC++ Redistributable is missing:
+winget install Python.Python.3.12 --scope user
+winget install Microsoft.VCRedist.2015+.x64
+
+# Allow script execution for this session:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Create, activate, and install:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[test]"
@@ -22,7 +31,8 @@ Allow the microphone:
 2. Turn **Microphone access** on
 3. Allow **Desktop apps** (and Python / Windows Terminal / Cursor if listed)
 
-Plug in or enable the mic you will talk into. Discord/Zoom can stay open; capture is WASAPI **shared**.
+Plug in or enable the mic you will talk into. Discord/Zoom can stay open; capture is WASAPI **shared**. For setup troubleshooting, see the troubleshooting table in [README.md](README.md#troubleshooting--common-setup-errors).
+
 
 ## 1. Automated suite
 

@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 from pathlib import Path
 
 from dictation.logutil import LOG, setup_logging
@@ -10,9 +10,10 @@ def test_setup_logging_idempotent(tmp_path: Path, monkeypatch) -> None:
     LOG.handlers.clear()
 
     setup_logging()
-    assert len(LOG.handlers) >= 2
+    n = len(LOG.handlers)
+    assert n >= 2
     assert LOG.level == logging.INFO
 
     # Call again, should not add duplicate handlers
     setup_logging()
-    assert len(LOG.handlers) >= 2
+    assert len(LOG.handlers) == n

@@ -1,23 +1,26 @@
-from ctypes import byref, pointer
+import ctypes
 import sys
 from unittest.mock import MagicMock
 
 import pytest
 
-from dictation.hotkey import (
-    HC_ACTION,
-    KBDLLHOOKSTRUCT,
-    LLKHF_EXTENDED,
-    LLKHF_UP,
-    SCAN_CTRL,
-    VK_CONTROL,
-    VK_RCONTROL,
-    RightCtrlHook,
-    _is_right_ctrl,
-)
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+
+if sys.platform == "win32":
+    from dictation.hotkey import (
+        HC_ACTION,
+        KBDLLHOOKSTRUCT,
+        LLKHF_EXTENDED,
+        LLKHF_UP,
+        SCAN_CTRL,
+        VK_CONTROL,
+        VK_RCONTROL,
+        RightCtrlHook,
+        _is_right_ctrl,
+    )
 
 
-def _make_kbd_struct(vk: int, scan: int = 0, flags: int = 0) -> KBDLLHOOKSTRUCT:
+def _make_kbd_struct(vk: int, scan: int = 0, flags: int = 0):
     s = KBDLLHOOKSTRUCT()
     s.vkCode = vk
     s.scanCode = scan
@@ -76,10 +79,7 @@ def test_hook_force_release() -> None:
     assert on_release.call_count == 1
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows ctypes hook structs only")
 def test_hook_ll_proc_transitions() -> None:
-    import ctypes
-
     on_press = MagicMock()
     on_release = MagicMock()
     hook = RightCtrlHook(on_press, on_release)
@@ -105,4 +105,3 @@ def test_hook_ll_proc_transitions() -> None:
     assert ret == 1
     assert hook.down is False
     assert on_release.call_count == 1
-
