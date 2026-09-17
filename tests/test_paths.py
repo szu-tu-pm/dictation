@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 from dictation.paths import (
     appdata_dir,
