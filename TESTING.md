@@ -54,6 +54,8 @@ This suite runs quickly and does **not** download the 1.6 GB Whisper model. Test
 
 | Test File | Scope & Logic Verified |
 | --- | --- |
+| `tests/test_vocabulary.py` | Word list, whole-word replacements, Whisper prompt truncation, JSON roundtrip |
+| `tests/test_history.py` | Dictation history prepend, blank skip, 200-item cap |
 | `tests/test_text.py` | Filler stripping (`um`, `uh`), ghost transcript filtering (`thanks for watching`), punctuation formatting |
 | `tests/test_audio_ring.py` | Circular buffer wrap, sequence preservation, dynamic growth (`grow_to`), truncation counter, RMS & quiet gating |
 | `tests/test_config.py` | Config roundtrip save/load, default values, recovery from corrupted JSON and non-dict content |
@@ -71,6 +73,12 @@ Smoke the same hook/WASAPI path the app uses at startup:
 
 ```powershell
 python -m dictation --check
+```
+
+Time a WAV through Whisper with no hotkey or paste:
+
+```powershell
+python -m dictation --transcribe path\to\clip.wav
 ```
 
 ## 2. First launch (model download)
@@ -102,7 +110,7 @@ Keep the app running. Copy this list and tick as you go.
 2. Copy some unrelated text (e.g. `CLIPBOARD-BEFORE`) so the clipboard is not empty.
 3. **Hold Right Ctrl**, say a clear sentence: *The quick brown fox jumps over the lazy dog.*
 4. **Release** Right Ctrl.
-5. Tray should go Recording → Transcribing → Idle (vulkan).
+5. Tray should go Recording (level % in the tooltip) → Transcribing → Idle (vulkan).
 6. **Pass:** the sentence (or a close transcript) appears at the caret.
 7. **Pass:** paste with Ctrl+V in another Notepad — you get `CLIPBOARD-BEFORE`, not the transcript (Unicode path leaves clipboard alone; clipboard fallback restores it).
 
@@ -175,6 +183,7 @@ Keep the app running. Copy this list and tick as you go.
 | Ctrl+S while talking | Hook not installed — only one dictation instance; run `--check` |
 | Old clipboard pasted into Slack/VS Code | File a note with the log; Unicode path failed and clipboard fallback raced |
 | Nothing pastes into admin Notepad | Expected without elevation |
+| Tray stuck on Transcribing | First GPU inference compiling shaders; wait, or run `--transcribe` on a WAV |
 
 Logs: `%APPDATA%\Dictation\dictation.log`
 Config: `%APPDATA%\Dictation\config.json`

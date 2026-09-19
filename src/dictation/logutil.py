@@ -8,12 +8,18 @@ from dictation.paths import log_path
 LOG = logging.getLogger("dictation")
 
 
+class _FlushingRotatingFileHandler(RotatingFileHandler):
+    def emit(self, record: logging.LogRecord) -> None:
+        super().emit(record)
+        self.flush()
+
+
 def setup_logging() -> None:
     if LOG.handlers:
         return
     LOG.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    file_handler = RotatingFileHandler(
+    file_handler = _FlushingRotatingFileHandler(
         log_path(), maxBytes=2_000_000, backupCount=2, encoding="utf-8"
     )
     file_handler.setFormatter(fmt)

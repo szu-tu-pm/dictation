@@ -32,8 +32,6 @@ user32.GetMessageW.argtypes = [POINTER(wintypes.MSG), wintypes.HWND, wintypes.UI
 user32.TranslateMessage.argtypes = [POINTER(wintypes.MSG)]
 user32.DispatchMessageW.argtypes = [POINTER(wintypes.MSG)]
 user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
-user32.GetAsyncKeyState.restype = wintypes.SHORT
 kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
@@ -59,11 +57,6 @@ def _is_right_ctrl(data: KBDLLHOOKSTRUCT) -> bool:
     if data.vkCode == VK_CONTROL and extended:
         return True
     return False
-
-
-def right_ctrl_physically_down() -> bool:
-    """True if Right Ctrl is currently down according to GetAsyncKeyState."""
-    return bool(user32.GetAsyncKeyState(VK_RCONTROL) & 0x8000)
 
 
 class RightCtrlHook:

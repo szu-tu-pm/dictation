@@ -18,6 +18,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import wave
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,7 @@ from dictation.config import AppConfig
 from dictation.logutil import LOG
 from dictation.paths import tmp_dir
 from dictation.text import is_ghost, strip_fillers
+from dictation.vocabulary import apply_replacements, load_vocabulary
 
 if TYPE_CHECKING:
     from ctypes import WinDLL
@@ -131,6 +133,32 @@ def _write_wav(path: Path, samples: np.ndarray, samplerate: int) -> None:
         wav.writeframes(pcm.tobytes())
 
 
+def load_wav_mono(path: Path, sample_rate: int) -> np.ndarray:
+    """Load a PCM WAV as 16 kHz-or-target-rate mono float32."""
+    with wave.open(str(path), "rb") as wav:
+        nch = wav.getnchannels()
+        width = wav.getsampwidth()
+        rate = wav.getframerate()
+        raw = wav.readframes(wav.getnframes())
+    if width == 2:
+        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif width == 4:
+        pcm = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    elif width == 1:
+        pcm = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    else:
+        raise RuntimeError(f"unsupported WAV sample width {width}")
+    if nch > 1:
+        pcm = pcm.reshape(-1, nch).mean(axis=1)
+    if rate != sample_rate and pcm.size:
+        duration = pcm.size / float(rate)
+        n_out = max(1, int(round(duration * sample_rate)))
+        x_old = np.linspace(0.0, 1.0, int(pcm.size), endpoint=False)
+        x_new = np.linspace(0.0, 1.0, n_out, endpoint=False)
+        pcm = np.interp(x_new, x_old, pcm).astype(np.float32)
+    return np.ascontiguousarray(pcm, dtype=np.float32)
+
+
 def too_quiet(samples: np.ndarray, threshold: float, min_samples: int) -> bool:
     if samples.size < min_samples:
         return True
@@ -148,7 +176,7 @@ class WhisperEngine:
         self.ready = False
         self._impl: _DllEngine | _CliEngine | None = None
 
-    def load(self) -> None:
+    def load(self, *, warmup: bool = True) -> None:
         dll_path = self.engine_dir / "whisper.dll"
         if dll_path.is_file():
             try:
@@ -157,6 +185,8 @@ class WhisperEngine:
                 self.backend = self._impl.backend
                 self.ready = True
                 LOG.info("whisper.dll ready backend=%s", self.backend)
+                if warmup:
+                    self.warmup()
                 return
             except Exception:
                 LOG.exception("whisper.dll init failed; falling back to whisper-cli")
@@ -165,16 +195,39 @@ class WhisperEngine:
         self.backend = self._impl.backend
         self.ready = True
         LOG.info("whisper-cli ready backend=%s", self.backend)
+        if warmup:
+            self.warmup()
 
-    def transcribe(self, samples: np.ndarray) -> str | None:
+    def warmup(self) -> None:
+        """Run one throwaway inference so Vulkan shaders compile before PTT."""
+        if self._impl is None:
+            return
+        n = max(1, int(self.cfg.sample_rate * 0.5))
+        rng = np.random.default_rng(0)
+        samples = (rng.standard_normal(n) * 0.05).astype(np.float32)
+        LOG.info("warmup transcribe starting samples=%s", n)
+        t0 = time.perf_counter()
+        try:
+            self._impl.transcribe(samples)
+        except Exception:
+            LOG.exception("warmup transcribe failed")
+            return
+        LOG.info("warmup transcribe done in %.2fs backend=%s", time.perf_counter() - t0, self.backend)
+
+    def transcribe(self, samples: np.ndarray, *, skip_gate: bool = False) -> str | None:
+        if samples.size == 0:
+            LOG.info("skipping empty capture")
+            return None
         min_samples = int(self.cfg.sample_rate * self.cfg.min_hold_ms / 1000)
-        if too_quiet(samples, self.cfg.energy_threshold, min_samples):
+        if not skip_gate and too_quiet(samples, self.cfg.energy_threshold, min_samples):
             LOG.info("skipping quiet/short capture (%s samples)", samples.size)
             return None
         if self._impl is None:
             raise RuntimeError("engine not loaded")
-        raw = self._impl.transcribe(samples)
-        text = strip_fillers(raw)
+        vocab = load_vocabulary()
+        prompt = vocab.prompt()
+        raw = self._impl.transcribe(samples, prompt=prompt)
+        text = apply_replacements(strip_fillers(raw), vocab)
         if is_ghost(text):
             LOG.info("skipping ghost transcript: %r", text)
             return None
@@ -197,6 +250,7 @@ class _DllEngine:
         self._ctx = c_void_p()
         self._log_cb = None
         self._lang = create_string_buffer(cfg.language.encode("ascii") or b"en")
+        self._prompt_buf = None
         self._logs: list[str] = []
 
     def _on_log(self, level: int, text: bytes | None, user: int) -> None:
@@ -239,6 +293,8 @@ class _DllEngine:
             raise RuntimeError("whisper_context_default_params_by_ref returned NULL")
         overlay = WhisperContextParams.from_address(_as_addr(params_ptr))
         overlay.use_gpu = use_gpu
+        # Flash-attn Vulkan shaders on AMD can stall the first whisper_full for minutes.
+        overlay.flash_attn = False
         overlay.gpu_device = 0
         try:
             ctx = self._dll.whisper_init_from_file_with_params(
@@ -266,8 +322,11 @@ class _DllEngine:
         self.backend = "cpu"
         self._ctx = c_void_p(ctx)
 
-    def transcribe(self, samples: np.ndarray) -> str:
+    def transcribe(self, samples: np.ndarray, prompt: str = "") -> str:
         assert self._dll is not None and self._ctx
+        pcm = np.ascontiguousarray(samples, dtype=np.float32)
+        if pcm.size == 0:
+            return ""
         params_ptr = self._dll.whisper_full_default_params_by_ref(WHISPER_SAMPLING_GREEDY)
         if not params_ptr:
             raise RuntimeError("whisper_full_default_params_by_ref returned NULL")
@@ -282,20 +341,28 @@ class _DllEngine:
         p.no_timestamps = True
         p.single_segment = True
         p.print_special = False
-        p.print_progress = False
+        p.print_progress = True
         p.print_realtime = False
         p.print_timestamps = False
         p.language = cast(self._lang, c_char_p)
         p.detect_language = False
         p.suppress_nst = True
         p.no_speech_thold = 0.6
-        pcm = np.ascontiguousarray(samples, dtype=np.float32)
+        if prompt:
+            self._prompt_buf = create_string_buffer(prompt.encode("utf-8"))
+            p.initial_prompt = cast(self._prompt_buf, c_char_p)
+            LOG.info("whisper prompt: %s", prompt[:120])
+        else:
+            self._prompt_buf = None
+        LOG.info("whisper_full begin n_samples=%s", int(pcm.size))
+        t0 = time.perf_counter()
         try:
             rc = self._dll.whisper_full(
                 self._ctx, params_ptr, pcm.ctypes.data_as(POINTER(c_float)), int(pcm.size)
             )
         finally:
             self._dll.whisper_free_params(params_ptr)
+        LOG.info("whisper_full done rc=%s elapsed=%.2fs", rc, time.perf_counter() - t0)
         if rc != 0:
             raise RuntimeError(f"whisper_full failed rc={rc}")
         n = self._dll.whisper_full_n_segments(self._ctx)
@@ -324,18 +391,18 @@ class _CliEngine:
         if not self.exe.is_file():
             raise FileNotFoundError(self.exe)
 
-    def transcribe(self, samples: np.ndarray) -> str:
+    def transcribe(self, samples: np.ndarray, prompt: str = "") -> str:
         try:
-            return self._run(samples, use_gpu=self._gpu_ok)
+            return self._run(samples, use_gpu=self._gpu_ok, prompt=prompt)
         except Exception:
             if not self._gpu_ok:
                 raise
             LOG.exception("whisper-cli GPU run failed; retrying --no-gpu")
             self._gpu_ok = False
             self.backend = "cli-cpu"
-            return self._run(samples, use_gpu=False)
+            return self._run(samples, use_gpu=False, prompt=prompt)
 
-    def _run(self, samples: np.ndarray, use_gpu: bool) -> str:
+    def _run(self, samples: np.ndarray, use_gpu: bool, prompt: str = "") -> str:
         import shutil
 
         tmp = Path(tempfile.mkdtemp(dir=tmp_dir()))
@@ -358,6 +425,8 @@ class _CliEngine:
                 "-of",
                 str(out_prefix),
             ]
+            if prompt:
+                cmd.extend(["-prompt", prompt])
             if not use_gpu:
                 cmd.append("-ng")
                 self.backend = "cli-cpu"

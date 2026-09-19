@@ -225,7 +225,11 @@ def _wm_paste(hwnd: int, timeout_ms: int = 200) -> bool:
     return bool(sent)
 
 
-def _send_unicode(text: str) -> int:
+UNICODE_CHUNK = 20
+UNICODE_CHUNK_SLEEP_S = 0.003
+
+
+def _unicode_units(text: str) -> list[int]:
     chars: list[int] = []
     normalized = text.replace("\r\n", "\n").replace("\n", "\r")
     for ch in normalized:
@@ -238,11 +242,15 @@ def _send_unicode(text: str) -> int:
             chars.append(int.from_bytes(encoded[2:], "little"))
         else:
             chars.append(code)
-    n = len(chars) * 2
+    return chars
+
+
+def _send_unicode_chunk(units: list[int]) -> int:
+    n = len(units) * 2
     if n == 0:
         return 0
     arr = (INPUT * n)()
-    for i, code in enumerate(chars):
+    for i, code in enumerate(units):
         down = arr[i * 2]
         up = arr[i * 2 + 1]
         down.type = INPUT_KEYBOARD
@@ -254,6 +262,29 @@ def _send_unicode(text: str) -> int:
         up.ki.wScan = code
         up.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
     return int(user32.SendInput(n, arr, sizeof(INPUT)))
+
+
+def _send_unicode(text: str) -> int:
+    units = _unicode_units(text)
+    if not units:
+        return 0
+    sent = 0
+    i = 0
+    while i < len(units):
+        if i:
+            time.sleep(UNICODE_CHUNK_SLEEP_S)
+        end = min(i + UNICODE_CHUNK, len(units))
+        # Do not split a UTF-16 surrogate pair across SendInput chunks.
+        if end < len(units) and 0xD800 <= units[end - 1] <= 0xDBFF:
+            end -= 1
+            if end <= i:
+                end = i + 2
+        n = _send_unicode_chunk(units[i:end])
+        if n == 0:
+            return sent
+        sent += n
+        i = end
+    return sent
 
 
 def _send_ctrl_v() -> None:
