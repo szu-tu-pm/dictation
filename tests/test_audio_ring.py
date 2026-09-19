@@ -1,6 +1,6 @@
 import numpy as np
 
-from dictation.audio import RingBuffer, rms
+from dictation.audio import RingBuffer, peak_abs, rms
 from dictation.transcribe import too_quiet
 
 
@@ -52,6 +52,8 @@ def test_truncation_events_increment() -> None:
 def test_rms_zero_and_ones() -> None:
     assert rms(np.zeros(0, dtype=np.float32)) == 0.0
     assert rms(np.ones(16, dtype=np.float32)) == 1.0
+    assert peak_abs(np.zeros(0, dtype=np.float32)) == 0.0
+    assert peak_abs(np.array([-0.5, 0.25], dtype=np.float32)) == 0.5
 
 
 def test_too_quiet_short_clip() -> None:
@@ -62,6 +64,25 @@ def test_too_quiet_short_clip() -> None:
 def test_too_quiet_silence() -> None:
     samples = np.zeros(4000, dtype=np.float32)
     assert too_quiet(samples, threshold=0.008, min_samples=3200)
+
+
+def test_capture_level_rises(monkeypatch) -> None:
+    from dictation.audio import AudioCapture
+    from dictation.config import AppConfig
+
+    monkeypatch.setattr("dictation.audio.find_wasapi_input", lambda preferred: 0)
+    monkeypatch.setattr(
+        "dictation.audio.sd.query_devices",
+        lambda *_a, **_k: {"name": "mic", "hostapi": 0},
+    )
+    monkeypatch.setattr(
+        "dictation.audio.sd.query_hostapis",
+        lambda: [{"name": "WASAPI"}],
+    )
+    cap = AudioCapture(AppConfig())
+    assert cap.level == 0.0
+    cap._callback(np.ones((256, 1), dtype=np.float32) * 0.2, 256, None, 0)
+    assert cap.level > 0.0
 
 
 def test_too_quiet_speech_like() -> None:

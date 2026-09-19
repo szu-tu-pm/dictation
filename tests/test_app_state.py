@@ -6,7 +6,7 @@ import pytest
 # Ensure pystray is mocked before dictation.app import so non-Windows/headless CI can collect
 sys.modules.setdefault("pystray", MagicMock())
 
-from dictation.app import DictationApp, State, main, run_check
+from dictation.app import DictationApp, State, main, run_check, run_transcribe
 
 
 def test_app_initial_state() -> None:
@@ -119,3 +119,32 @@ def test_cli_main_check() -> None:
         main(["--check"])
     assert exc_info.value.code == 0
     assert mock_check.called
+
+
+def test_cli_main_transcribe_missing(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--transcribe", str(tmp_path / "missing.wav")])
+    assert exc_info.value.code == 2
+
+
+def test_run_transcribe_uses_engine(tmp_path, monkeypatch) -> None:
+    import numpy as np
+
+    from dictation.transcribe import _write_wav
+
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    wav = tmp_path / "utt.wav"
+    _write_wav(wav, np.zeros(16000, dtype=np.float32), 16000)
+    fake_engine = MagicMock()
+    fake_engine.backend = "vulkan"
+    fake_engine.transcribe.return_value = "hello"
+    with (
+        patch("dictation.app.ensure_engine", return_value=tmp_path),
+        patch("dictation.app.ensure_model", return_value=tmp_path / "m.bin"),
+        patch("dictation.app.WhisperEngine", return_value=fake_engine),
+    ):
+        assert run_transcribe(str(wav)) == 0
+    fake_engine.load.assert_called_once_with(warmup=False)
+    fake_engine.transcribe.assert_called_once()
+    fake_engine.close.assert_called_once()

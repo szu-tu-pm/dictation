@@ -27,6 +27,17 @@ def test_send_unicode_surrogate_and_newlines() -> None:
         assert n == 26
 
 
+def test_send_unicode_chunks_long_text() -> None:
+    with (
+        patch.object(paste_mod.user32, "SendInput", side_effect=lambda n, arr, size: n) as mock_send,
+        patch("dictation.paste.time.sleep") as mock_sleep,
+    ):
+        count = paste_mod._send_unicode("a" * 25)
+        assert count == 50
+        assert mock_send.call_count == 2
+        assert mock_sleep.call_count == 1
+
+
 def test_paste_text_send_unicode_primary_path() -> None:
     with (
         patch("dictation.paste._send_unicode", return_value=10) as mock_unicode,

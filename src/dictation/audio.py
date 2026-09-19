@@ -88,6 +88,12 @@ def rms(samples: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
 
 
+def peak_abs(samples: np.ndarray) -> float:
+    if samples.size == 0:
+        return 0.0
+    return float(np.max(np.abs(samples)))
+
+
 def find_wasapi_input(preferred: int | None) -> int:
     hostapis = sd.query_hostapis()
     wasapi_index = next(
@@ -114,6 +120,8 @@ class AudioCapture:
         self._mark: int | None = None
         self._pa_status = 0
         self._pa_status_count = 0
+        self._level = 0.0
+        self._level_lock = threading.Lock()
         self.device = find_wasapi_input(cfg.device)
         info = sd.query_devices(self.device)
         LOG.info(
@@ -127,7 +135,16 @@ class AudioCapture:
         if status:
             self._pa_status = int(status)
             self._pa_status_count += 1
-        self.ring.write(indata[:, 0])
+        chunk = indata[:, 0]
+        self.ring.write(chunk)
+        energy = rms(chunk)
+        with self._level_lock:
+            self._level = self._level * 0.6 + min(1.0, energy * 10.0) * 0.4
+
+    @property
+    def level(self) -> float:
+        with self._level_lock:
+            return self._level
 
     def drain_portaudio_status(self) -> int | None:
         if self._pa_status_count == 0:

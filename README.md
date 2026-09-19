@@ -51,8 +51,8 @@ python -m dictation
 
 1. Focus Notepad, VS Code, Discord, Slack, or any window that accepts text.
 2. **Hold Right Ctrl** and speak naturally.
-3. **Release Right Ctrl** — after a short transcription delay, text appears at the caret.
-4. Tray tooltip shows `Idle (vulkan)` / `Recording` / `Transcribing…`. Right-click the tray icon and choose **Quit** to stop.
+3. **Release Right Ctrl** — after a short transcription delay, text appears at the caret, with a trailing space so the next utterance continues the sentence.
+4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Transcribing…`. The recording icon grows with microphone level. Right-click the tray icon and choose **Quit** to stop.
 
 **Key behavior:**
 - Right Ctrl is **swallowed** while held so it never reaches other programs. Typing S or W while talking will not trigger Save or Close Tab.
@@ -63,7 +63,7 @@ python -m dictation
 
 ## Testing
 
-To run the automated test suite (56 tests):
+To run the automated test suite:
 
 ```powershell
 pip install -e ".[test]"
@@ -77,7 +77,7 @@ See [TESTING.md](TESTING.md) for the manual hardware checklist and test breakdow
 
 ## How paste works
 
-Unicode `SendInput` is the primary path (typing characters directly at the caret). Your clipboard is **not touched or overwritten** on the happy path. If `SendInput` fails or is blocked, it falls back to snapshotting the previous clipboard, setting the transcript, sending `SendMessageTimeout(WM_PASTE)` or `Ctrl+V`, and restoring your previous clipboard in a `finally` block.
+Unicode `SendInput` is the primary path (typing characters directly at the caret, in 20-code-unit chunks). Your clipboard is **not touched or overwritten** on the happy path. If `SendInput` fails or is blocked, it falls back to snapshotting the previous clipboard, setting the transcript, sending `SendMessageTimeout(WM_PASTE)` or `Ctrl+V`, and restoring your previous clipboard in a `finally` block.
 
 ---
 
@@ -95,7 +95,26 @@ Unicode `SendInput` is the primary path (typing characters directly at the caret
 | `energy_threshold` | `0.008` | RMS energy floor to drop silent takes |
 | `model_filename` | `ggml-large-v3-turbo.bin` | ggml file under `models\` |
 
-Logs: `%APPDATA%\Dictation\dictation.log`.
+Names and jargon live in `%APPDATA%\Dictation\vocabulary.json` (created on first use):
+
+```json
+{
+  "words": ["Praetorian", "Cursor", "Vulkan"],
+  "replacements": [
+    {"heard": "wisper", "meant": "Whisper"}
+  ]
+}
+```
+
+`words` and replacement targets are fed to Whisper as an `initial_prompt`. After transcription, `replacements` are applied as whole-word, case-insensitive substitutions. Successful pastes are appended to `%APPDATA%\Dictation\history.json` (last 200).
+
+To time the engine without the hotkey or paste path:
+
+```powershell
+python -m dictation --transcribe C:\path\to\clip.wav
+```
+
+Logs: `%APPDATA%\Dictation\dictation.log`. First launch can sit on **Warming up GPU** for a minute while Vulkan shaders compile.
 
 ---
 

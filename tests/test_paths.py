@@ -4,9 +4,11 @@ from dictation.paths import (
     appdata_dir,
     config_path,
     engine_dir,
+    history_path,
     log_path,
     models_dir,
     tmp_dir,
+    vocabulary_path,
 )
 
 
@@ -27,6 +29,8 @@ def test_paths_subdirectories(tmp_path: Path, monkeypatch) -> None:
     assert tmp_dir() == base / "tmp"
     assert tmp_dir().is_dir()
     assert config_path() == base / "config.json"
+    assert vocabulary_path() == base / "vocabulary.json"
+    assert history_path() == base / "history.json"
     assert log_path() == base / "dictation.log"
 
 
