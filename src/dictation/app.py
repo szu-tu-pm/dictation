@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 import argparse
+from enum import Enum
+from pathlib import Path
 import queue
 import threading
 import time
-from enum import Enum
 
 import pystray
 
 from dictation.assets import ensure_engine, ensure_model
-from dictation.audio import AudioCapture, find_wasapi_input
+from dictation.audio import AudioCapture, find_wasapi_input, peak_abs, rms
 from dictation.config import load_config
-from dictation.hotkey import RightCtrlHook, right_ctrl_physically_down
+from dictation.history import record_dictation
+from dictation.hotkey import RightCtrlHook
 from dictation.icons import tray_icon
 from dictation.logutil import LOG, setup_logging
 from dictation.paste import paste_text
-from dictation.paths import appdata_dir, config_path, log_path
-from dictation.transcribe import WhisperEngine
+from dictation.paths import appdata_dir, config_path, history_path, log_path, vocabulary_path
+from dictation.transcribe import WhisperEngine, load_wav_mono
 
 
 class State(Enum):
@@ -49,7 +51,7 @@ class DictationApp:
         self._progress_last_pct = -1
         self._progress_last_ts = 0.0
         self._record_started = 0.0
-        self._phys_up_ticks = 0
+        self._level_ui_ts = 0.0
 
     def _set_state(self, state: State, status: str, *, log: bool = True) -> None:
         with self._lock:
@@ -57,9 +59,9 @@ class DictationApp:
             self.status = status
             if log:
                 LOG.info("state=%s %s", state.value, status)
-            self._refresh_icon()
+            self._refresh_icon(update_menu=True)
 
-    def _refresh_icon(self) -> None:
+    def _refresh_icon(self, *, update_menu: bool = True) -> None:
         if self.icon is None:
             return
         visual = {
@@ -71,8 +73,16 @@ class DictationApp:
             State.TRANSCRIBING: "transcribing",
             State.ERROR: "error",
         }[self.state]
-        self.icon.icon = tray_icon(visual)
-        self.icon.title = f"Dictation — {self.status}"
+        level = 0.0
+        if self.state is State.RECORDING and self.audio is not None:
+            level = self.audio.level
+        self.icon.icon = tray_icon(visual, level=level)
+        if self.state is State.RECORDING:
+            self.icon.title = f"Dictation — Recording {int(level * 100)}%"
+        else:
+            self.icon.title = f"Dictation — {self.status}"
+        if not update_menu:
+            return
         try:
             self.icon.update_menu()
         except Exception:
@@ -135,20 +145,19 @@ class DictationApp:
             if recording and self.hook is not None:
                 elapsed = time.monotonic() - self._record_started
                 if elapsed >= self.cfg.max_record_seconds:
-                    self._phys_up_ticks = 0
                     self.hook.force_release("max_record_seconds")
-                elif self.hook.down and not right_ctrl_physically_down():
-                    # Require two consecutive ticks (~100ms) so a normal key-up
-                    # that beats the hook callback by a millisecond is not logged
-                    # as force_release.
-                    self._phys_up_ticks += 1
-                    if self._phys_up_ticks >= 2:
-                        self._phys_up_ticks = 0
-                        self.hook.force_release("right_ctrl_physically_up")
-                else:
-                    self._phys_up_ticks = 0
-            else:
-                self._phys_up_ticks = 0
+            # Do not poll GetAsyncKeyState for Right Ctrl. The hook swallows the
+            # key, so Windows key state stays "up" and a physical-up watchdog
+            # would stop recording after ~50ms while the user is still holding.
+            if recording and self.audio is not None:
+                now = time.monotonic()
+                if now - self._level_ui_ts >= 0.1:
+                    self._level_ui_ts = now
+                    with self._lock:
+                        if self.state is State.RECORDING:
+                            # Skip update_menu: rebuilding the tray menu at 10 Hz
+                            # is expensive and dismisses an open context menu.
+                            self._refresh_icon(update_menu=False)
 
             try:
                 ev = self._ptt.get(timeout=0.05)
@@ -162,13 +171,11 @@ class DictationApp:
                         continue
                     self.audio.mark_start()
                     self._record_started = time.monotonic()
-                    self._phys_up_ticks = 0
                     self._set_state(State.RECORDING, "Recording")
             elif ev == "release":
                 with self._lock:
                     if self.state is not State.RECORDING or self.audio is None:
                         continue
-                    self._phys_up_ticks = 0
                     self._set_state(State.TRANSCRIBING, "Transcribing…")
                 self._jobs.put("slice")
 
@@ -185,10 +192,20 @@ class DictationApp:
                     samples = self.audio.take_slice()
                 else:
                     samples = job  # type: ignore[assignment]
+                n = int(getattr(samples, "size", 0))
+                LOG.info(
+                    "transcribe start samples=%s duration=%.2fs rms=%.4f peak=%.4f",
+                    n,
+                    n / float(self.cfg.sample_rate),
+                    rms(samples),
+                    peak_abs(samples),
+                )
                 text = self.engine.transcribe(samples)  # type: ignore[arg-type]
                 if text:
                     LOG.info("transcript: %s", text)
-                    paste_text(text)
+                    to_paste = text if text.endswith((" ", "\n")) else text + " "
+                    paste_text(to_paste)
+                    record_dictation(text)
                 else:
                     LOG.info("nothing to paste")
             except Exception:
@@ -213,6 +230,7 @@ class DictationApp:
                 return
             self._set_state(State.LOADING, "Loading model…")
             self.engine = WhisperEngine(engine_dir, model_path, self.cfg)
+            self._set_state(State.LOADING, "Warming up GPU (first run can take a minute)…")
             self.engine.load()
             if self._stop.is_set():
                 return
@@ -261,10 +279,45 @@ class DictationApp:
         self.shutdown()
 
 
+def run_transcribe(wav: str) -> int:
+    setup_logging()
+    cfg = load_config()
+    path = Path(wav)
+    if not path.is_file():
+        print(f"not found: {path}")
+        return 2
+    samples = load_wav_mono(path, cfg.sample_rate)
+    n = int(samples.size)
+    print(
+        f"audio: {n / cfg.sample_rate:.2f}s rms={rms(samples):.4f} "
+        f"peak={peak_abs(samples):.4f} path={path}"
+    )
+    if n == 0:
+        print("empty audio; nothing to transcribe")
+        return 1
+    engine_dir = ensure_engine(cfg, lambda *_a, **_k: None)
+    model_path = ensure_model(cfg, lambda *_a, **_k: None)
+    engine = WhisperEngine(engine_dir, model_path, cfg)
+    try:
+        t0 = time.perf_counter()
+        engine.load(warmup=False)
+        t1 = time.perf_counter()
+        text = engine.transcribe(samples, skip_gate=True)
+        t2 = time.perf_counter()
+        print(f"backend: {engine.backend}")
+        print(f"load {t1 - t0:.2f}s | transcribe {t2 - t1:.2f}s")
+        print(text or "(empty)")
+    finally:
+        engine.close()
+    return 0
+
+
 def run_check() -> int:
     setup_logging()
     cfg = load_config()
     print(f"config: {config_path()}")
+    print(f"vocab:  {vocabulary_path()}")
+    print(f"history:{history_path()}")
     print(f"data:   {appdata_dir()}")
     print(f"log:    {log_path()}")
     device = find_wasapi_input(cfg.device)
@@ -281,9 +334,16 @@ def run_check() -> int:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Windows local dictation")
     parser.add_argument("--check", action="store_true", help="verify WASAPI + hook, then exit")
+    parser.add_argument(
+        "--transcribe",
+        metavar="WAV",
+        help="transcribe a WAV file, print timing, and exit (no paste)",
+    )
     args = parser.parse_args(argv)
     if args.check:
         raise SystemExit(run_check())
+    if args.transcribe:
+        raise SystemExit(run_transcribe(args.transcribe))
     setup_logging()
     LOG.info("dictation starting")
     DictationApp().run()

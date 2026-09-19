@@ -35,3 +35,11 @@ def tmp_dir() -> Path:
 
 def log_path() -> Path:
     return appdata_dir() / "dictation.log"
+
+
+def vocabulary_path() -> Path:
+    return appdata_dir() / "vocabulary.json"
+
+
+def history_path() -> Path:
+    return appdata_dir() / "history.json"
