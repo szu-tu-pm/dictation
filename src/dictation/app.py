@@ -45,8 +45,8 @@ class DictationApp:
         self.hook: RightCtrlHook | None = None
         self.engine: WhisperEngine | None = None
         self.icon: pystray.Icon | None = None
-        self._coord: threading.Thread | None = None
-        self._worker: threading.Thread | None = None
+        self._coord_thread: threading.Thread | None = None
+        self._worker_thread: threading.Thread | None = None
         self._error_gen = 0
         self._progress_last_pct = -1
         self._progress_last_ts = 0.0
@@ -186,8 +186,8 @@ class DictationApp:
             except queue.Empty:
                 continue
             try:
-                assert self.engine is not None
-                assert self.audio is not None
+                if self.engine is None or self.audio is None:
+                    raise RuntimeError("worker started before engine/audio were ready")
                 if job == "slice":
                     samples = self.audio.take_slice()
                 else:
@@ -235,8 +235,7 @@ class DictationApp:
             if self._stop.is_set():
                 return
             self.backend = self.engine.backend
-            if self.hook is None:
-                self.hook = RightCtrlHook(self._on_press, self._on_release)
+            self.hook = RightCtrlHook(self._on_press, self._on_release)
             self.hook.start()
             self._set_state(State.IDLE, f"Idle ({self.backend})")
         except Exception as exc:
@@ -263,11 +262,12 @@ class DictationApp:
     def run(self) -> None:
         self.audio = AudioCapture(self.cfg)
         self.audio.start()
-        self.hook = RightCtrlHook(self._on_press, self._on_release)
-        self._coord = threading.Thread(target=self._coordinator, name="ptt", daemon=True)
-        self._worker = threading.Thread(target=self._worker, name="stt", daemon=True)
-        self._coord.start()
-        self._worker.start()
+        # Hook is created and started in _startup after the model is ready,
+        # so Right Ctrl is not swallowed during download/warmup.
+        self._coord_thread = threading.Thread(target=self._coordinator, name="ptt", daemon=True)
+        self._worker_thread = threading.Thread(target=self._worker, name="stt", daemon=True)
+        self._coord_thread.start()
+        self._worker_thread.start()
         threading.Thread(target=self._startup, name="startup", daemon=True).start()
         self.icon = pystray.Icon(
             "dictation",
