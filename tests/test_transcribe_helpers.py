@@ -37,6 +37,17 @@ def test_engine_skips_quiet_without_loading() -> None:
     assert engine.transcribe(samples) is None
 
 
+def test_engine_skips_empty_even_with_skip_gate() -> None:
+    engine = WhisperEngine(Path("."), Path("missing.bin"), AppConfig())
+
+    class _Fake:
+        def transcribe(self, samples: np.ndarray, prompt: str = "") -> str:
+            raise AssertionError("must not call impl on empty audio")
+
+    engine._impl = _Fake()  # type: ignore[assignment]
+    assert engine.transcribe(np.zeros(0, dtype=np.float32), skip_gate=True) is None
+
+
 def test_warmup_noop_without_impl() -> None:
     engine = WhisperEngine(Path("."), Path("missing.bin"), AppConfig())
     engine.warmup()

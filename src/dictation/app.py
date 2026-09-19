@@ -59,9 +59,9 @@ class DictationApp:
             self.status = status
             if log:
                 LOG.info("state=%s %s", state.value, status)
-            self._refresh_icon()
+            self._refresh_icon(update_menu=True)
 
-    def _refresh_icon(self) -> None:
+    def _refresh_icon(self, *, update_menu: bool = True) -> None:
         if self.icon is None:
             return
         visual = {
@@ -81,6 +81,8 @@ class DictationApp:
             self.icon.title = f"Dictation — Recording {int(level * 100)}%"
         else:
             self.icon.title = f"Dictation — {self.status}"
+        if not update_menu:
+            return
         try:
             self.icon.update_menu()
         except Exception:
@@ -153,7 +155,9 @@ class DictationApp:
                     self._level_ui_ts = now
                     with self._lock:
                         if self.state is State.RECORDING:
-                            self._refresh_icon()
+                            # Skip update_menu: rebuilding the tray menu at 10 Hz
+                            # is expensive and dismisses an open context menu.
+                            self._refresh_icon(update_menu=False)
 
             try:
                 ev = self._ptt.get(timeout=0.05)
@@ -288,18 +292,23 @@ def run_transcribe(wav: str) -> int:
         f"audio: {n / cfg.sample_rate:.2f}s rms={rms(samples):.4f} "
         f"peak={peak_abs(samples):.4f} path={path}"
     )
+    if n == 0:
+        print("empty audio; nothing to transcribe")
+        return 1
     engine_dir = ensure_engine(cfg, lambda *_a, **_k: None)
     model_path = ensure_model(cfg, lambda *_a, **_k: None)
     engine = WhisperEngine(engine_dir, model_path, cfg)
-    t0 = time.perf_counter()
-    engine.load(warmup=False)
-    t1 = time.perf_counter()
-    text = engine.transcribe(samples, skip_gate=True)
-    t2 = time.perf_counter()
-    print(f"backend: {engine.backend}")
-    print(f"load {t1 - t0:.2f}s | transcribe {t2 - t1:.2f}s")
-    print(text or "(empty)")
-    engine.close()
+    try:
+        t0 = time.perf_counter()
+        engine.load(warmup=False)
+        t1 = time.perf_counter()
+        text = engine.transcribe(samples, skip_gate=True)
+        t2 = time.perf_counter()
+        print(f"backend: {engine.backend}")
+        print(f"load {t1 - t0:.2f}s | transcribe {t2 - t1:.2f}s")
+        print(text or "(empty)")
+    finally:
+        engine.close()
     return 0
 
 

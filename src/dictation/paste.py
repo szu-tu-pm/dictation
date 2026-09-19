@@ -269,13 +269,21 @@ def _send_unicode(text: str) -> int:
     if not units:
         return 0
     sent = 0
-    for i in range(0, len(units), UNICODE_CHUNK):
+    i = 0
+    while i < len(units):
         if i:
             time.sleep(UNICODE_CHUNK_SLEEP_S)
-        n = _send_unicode_chunk(units[i : i + UNICODE_CHUNK])
+        end = min(i + UNICODE_CHUNK, len(units))
+        # Do not split a UTF-16 surrogate pair across SendInput chunks.
+        if end < len(units) and 0xD800 <= units[end - 1] <= 0xDBFF:
+            end -= 1
+            if end <= i:
+                end = i + 2
+        n = _send_unicode_chunk(units[i:end])
         if n == 0:
             return sent
         sent += n
+        i = end
     return sent
 
 

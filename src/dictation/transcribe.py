@@ -215,6 +215,9 @@ class WhisperEngine:
         LOG.info("warmup transcribe done in %.2fs backend=%s", time.perf_counter() - t0, self.backend)
 
     def transcribe(self, samples: np.ndarray, *, skip_gate: bool = False) -> str | None:
+        if samples.size == 0:
+            LOG.info("skipping empty capture")
+            return None
         min_samples = int(self.cfg.sample_rate * self.cfg.min_hold_ms / 1000)
         if not skip_gate and too_quiet(samples, self.cfg.energy_threshold, min_samples):
             LOG.info("skipping quiet/short capture (%s samples)", samples.size)
@@ -321,6 +324,9 @@ class _DllEngine:
 
     def transcribe(self, samples: np.ndarray, prompt: str = "") -> str:
         assert self._dll is not None and self._ctx
+        pcm = np.ascontiguousarray(samples, dtype=np.float32)
+        if pcm.size == 0:
+            return ""
         params_ptr = self._dll.whisper_full_default_params_by_ref(WHISPER_SAMPLING_GREEDY)
         if not params_ptr:
             raise RuntimeError("whisper_full_default_params_by_ref returned NULL")
@@ -348,7 +354,6 @@ class _DllEngine:
             LOG.info("whisper prompt: %s", prompt[:120])
         else:
             self._prompt_buf = None
-        pcm = np.ascontiguousarray(samples, dtype=np.float32)
         LOG.info("whisper_full begin n_samples=%s", int(pcm.size))
         t0 = time.perf_counter()
         try:

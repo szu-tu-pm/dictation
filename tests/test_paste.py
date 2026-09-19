@@ -38,6 +38,24 @@ def test_send_unicode_chunks_long_text() -> None:
         assert mock_sleep.call_count == 1
 
 
+def test_send_unicode_keeps_surrogate_pair_in_one_chunk() -> None:
+    # 19 BMP chars + one emoji => 21 UTF-16 units; chunk size is 20, so the
+    # naive split would orphan the high surrogate at index 19.
+    text = ("x" * 19) + "\U0001F600"
+    with (
+        patch.object(paste_mod.user32, "SendInput", side_effect=lambda n, arr, size: n) as mock_send,
+        patch("dictation.paste.time.sleep"),
+    ):
+        count = paste_mod._send_unicode(text)
+        assert count == 42  # 21 units * 2 events
+        assert mock_send.call_count == 2
+        first_n = mock_send.call_args_list[0][0][0]
+        second_n = mock_send.call_args_list[1][0][0]
+        # First chunk ends before the high surrogate (19 units -> 38 events).
+        assert first_n == 38
+        assert second_n == 4  # high+low surrogate, down+up each
+
+
 def test_paste_text_send_unicode_primary_path() -> None:
     with (
         patch("dictation.paste._send_unicode", return_value=10) as mock_unicode,

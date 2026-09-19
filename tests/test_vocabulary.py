@@ -23,6 +23,23 @@ def test_apply_replacements_ignores_partial() -> None:
     assert apply_replacements("category", vocab) == "category"
 
 
+def test_apply_replacements_symbol_terms() -> None:
+    vocab = Vocabulary(
+        replacements=[
+            Replacement(heard="C++", meant="Cplusplus"),
+            Replacement(heard="C#", meant="CSharp"),
+            Replacement(heard="Node.js", meant="NodeJS"),
+        ]
+    )
+    assert apply_replacements("I write C++ and C# with Node.js", vocab) == (
+        "I write Cplusplus and CSharp with NodeJS"
+    )
+    # Still avoid matching inside longer alphanumeric tokens
+    assert apply_replacements("category", Vocabulary(replacements=[Replacement("cat", "dog")])) == (
+        "category"
+    )
+
+
 def test_prompt_joins_unique_names() -> None:
     vocab = Vocabulary(
         words=["Cursor", "Vulkan"],

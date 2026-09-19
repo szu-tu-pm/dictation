@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from typing import Any
 
+from dictation.logutil import LOG
 from dictation.paths import history_path
 
 HISTORY_LIMIT = 200
@@ -32,6 +33,7 @@ def load_history() -> list[dict[str, str]]:
 
 
 def record_dictation(text: str, *, limit: int = HISTORY_LIMIT) -> None:
+    """Append a transcript to history.json. Failures must not fail paste."""
     cleaned = text.strip()
     if not cleaned:
         return
@@ -41,5 +43,12 @@ def record_dictation(text: str, *, limit: int = HISTORY_LIMIT) -> None:
         items = items[:limit]
     path = history_path()
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(items, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    try:
+        tmp.write_text(json.dumps(items, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        LOG.exception("failed to write dictation history")
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass

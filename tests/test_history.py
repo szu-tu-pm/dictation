@@ -25,3 +25,14 @@ def test_record_dictation_limit(tmp_path, monkeypatch) -> None:
     texts = [i["text"] for i in load_history()]
     assert texts == ["item 4", "item 3", "item 2"]
     assert HISTORY_LIMIT == 200
+
+
+def test_record_dictation_swallows_oserror(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    from pathlib import Path
+    from unittest.mock import patch
+
+    with patch.object(Path, "replace", side_effect=PermissionError("locked")):
+        # Must not raise — paste already succeeded by the time history is written.
+        record_dictation("hello")
+    assert load_history() == []

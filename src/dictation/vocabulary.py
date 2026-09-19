@@ -90,11 +90,21 @@ def save_vocabulary(vocab: Vocabulary) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _boundary_pattern(term: str) -> str:
+    """Whole-token match that still works for C++, C#, Node.js, etc."""
+    escaped = re.escape(term)
+    if not term:
+        return escaped
+    prefix = r"(?<!\w)" if term[0].isalnum() or term[0] == "_" else ""
+    suffix = r"(?!\w)" if term[-1].isalnum() or term[-1] == "_" else ""
+    return rf"(?i){prefix}{escaped}{suffix}"
+
+
 def apply_replacements(text: str, vocab: Vocabulary) -> str:
     out = text
     for r in vocab.replacements:
         if not r.heard or not r.meant:
             continue
-        pattern = r"(?i)\b" + re.escape(r.heard) + r"\b"
+        pattern = _boundary_pattern(r.heard)
         out = re.sub(pattern, lambda _m, meant=r.meant: meant, out)
     return out
