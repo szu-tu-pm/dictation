@@ -287,7 +287,8 @@ class _DllEngine:
         return dll
 
     def _init_ctx(self, use_gpu: bool) -> c_void_p:
-        assert self._dll is not None
+        if self._dll is None:
+            raise RuntimeError("whisper.dll is not bound")
         params_ptr = self._dll.whisper_context_default_params_by_ref()
         if not params_ptr:
             raise RuntimeError("whisper_context_default_params_by_ref returned NULL")
@@ -323,7 +324,8 @@ class _DllEngine:
         self._ctx = c_void_p(ctx)
 
     def transcribe(self, samples: np.ndarray, prompt: str = "") -> str:
-        assert self._dll is not None and self._ctx
+        if self._dll is None or not self._ctx:
+            raise RuntimeError("whisper.dll context is not loaded")
         pcm = np.ascontiguousarray(samples, dtype=np.float32)
         if pcm.size == 0:
             return ""

@@ -25,7 +25,6 @@ KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_KEYUP = 0x0002
 VK_CONTROL = 0x11
 VK_V = 0x56
-KEYEVENTF_KEYUP_FLAG = 0x0002
 
 user32.OpenClipboard.argtypes = [HWND]
 user32.OpenClipboard.restype = BOOL
@@ -185,6 +184,9 @@ def _set_text(text: str) -> None:
         if not handle:
             raise RuntimeError("GlobalAlloc failed")
         ptr = kernel32.GlobalLock(handle)
+        if not ptr:
+            kernel32.GlobalFree(handle)
+            raise RuntimeError("GlobalLock failed")
         ctypes.memmove(ptr, payload, len(payload))
         kernel32.GlobalUnlock(handle)
         if not user32.SetClipboardData(CF_UNICODETEXT, handle):
@@ -292,8 +294,8 @@ def _send_ctrl_v() -> None:
     seq = [
         (VK_CONTROL, 0),
         (VK_V, 0),
-        (VK_V, KEYEVENTF_KEYUP_FLAG),
-        (VK_CONTROL, KEYEVENTF_KEYUP_FLAG),
+        (VK_V, KEYEVENTF_KEYUP),
+        (VK_CONTROL, KEYEVENTF_KEYUP),
     ]
     for i, (vk, flags) in enumerate(seq):
         arr[i].type = INPUT_KEYBOARD
