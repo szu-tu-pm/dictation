@@ -202,3 +202,7 @@ class AudioCapture:
                 self.ring.truncation_events - before,
             )
         return samples
+
+    def cancel(self) -> None:
+        """Discard the active mark without taking a slice."""
+        self._mark = None
