@@ -262,3 +262,31 @@ def test_app_on_cancel_queues_cancel() -> None:
     app.state = State.IDLE
     assert app._on_cancel() is False
     assert app._ptt.empty()
+
+
+def test_coordinator_cancel_only_discards_if_recording() -> None:
+    app = DictationApp()
+    app.audio = MagicMock()
+    app.state = State.RECORDING
+
+    with patch("dictation.app.play_cue") as mock_cue, patch.object(app, "_refresh_icon"):
+        coord_thread = threading.Thread(target=app._coordinator, daemon=True)
+        coord_thread.start()
+        try:
+            app._ptt.put("cancel")
+            for _ in range(50):
+                if app.state == State.IDLE:
+                    break
+                time.sleep(0.02)
+            assert app.state == State.IDLE
+            assert app.audio.cancel.called
+            mock_cue.assert_called_with("discard", enabled=True)
+
+            # Now in IDLE, putting another cancel should NOT call play_cue
+            mock_cue.reset_mock()
+            app._ptt.put("cancel")
+            time.sleep(0.05)
+            assert not mock_cue.called
+        finally:
+            app._stop.set()
+            coord_thread.join(timeout=1.0)

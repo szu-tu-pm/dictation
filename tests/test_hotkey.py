@@ -138,6 +138,39 @@ def test_hook_escape_cancels_when_down() -> None:
     assert ret == 1
 
 
+def test_hook_escape_auto_repeat_swallowed_while_cancelling() -> None:
+    on_press = MagicMock()
+    on_release = MagicMock()
+    on_cancel = MagicMock(return_value=True)
+    hook = RightCtrlHook(on_press, on_release, on_cancel)
+
+    # Press Right Ctrl
+    data_down = _make_kbd_struct(vk=VK_RCONTROL, flags=0)
+    hook._ll_proc(HC_ACTION, 0, ctypes.addressof(data_down))
+    assert hook.down is True
+
+    # First Escape down -> triggers cancel, swallowed
+    esc_down = _make_kbd_struct(vk=VK_ESCAPE, flags=0)
+    ret1 = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret1 == 1
+    assert on_cancel.call_count == 1
+    assert hook.down is False
+
+    # Auto-repeat Escape down while still held -> swallowed, on_cancel not called again
+    ret2 = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret2 == 1
+    assert on_cancel.call_count == 1
+
+    # Escape key up -> swallowed, clears cancelling state
+    esc_up = _make_kbd_struct(vk=VK_ESCAPE, flags=LLKHF_UP)
+    ret3 = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_up))
+    assert ret3 == 1
+
+    # Next Escape down (not held with RCtrl) -> passes through (ret == 0)
+    ret4 = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret4 == 0
+
+
 def test_hook_escape_not_swallowed_when_on_cancel_returns_false() -> None:
     on_press = MagicMock()
     on_release = MagicMock()

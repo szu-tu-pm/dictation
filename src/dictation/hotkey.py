@@ -109,6 +109,8 @@ class RightCtrlHook:
                     if not going_up:
                         cancel_fire = False
                         with self._down_lock:
+                            if self._cancelling:
+                                return 1
                             if self._down and self._on_cancel is not None:
                                 cancel_fire = bool(self._on_cancel())
                                 if cancel_fire:

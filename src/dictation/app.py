@@ -189,12 +189,15 @@ class DictationApp:
                 play_cue("stop", enabled=self.cfg.sound_effects)
                 self._jobs.put("slice")
             elif ev == "cancel":
+                was_recording = False
                 with self._lock:
                     if self.state is State.RECORDING:
+                        was_recording = True
                         if self.audio is not None:
                             self.audio.cancel()
                         self._set_state(State.IDLE, f"Idle ({self.backend})")
-                play_cue("discard", enabled=self.cfg.sound_effects)
+                if was_recording:
+                    play_cue("discard", enabled=self.cfg.sound_effects)
 
     def _worker(self) -> None:
         while not self._stop.is_set():
