@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Ensure Windows-only / GUI deps are mocked on non-Windows platforms
+# Ensure Windows-only / GUI deps are mocked on non-Windows platforms.
+# pystray stub lives in conftest.py so MenuItem retains attributes.
 if sys.platform != "win32":
     sys.modules.setdefault("pystray", MagicMock())
     sys.modules.setdefault("dictation.hotkey", MagicMock())

@@ -4,7 +4,16 @@ from unittest.mock import MagicMock
 
 
 class _MenuItem:
-    def __init__(self, text, action=None, checked=None, enabled=True, default=False, radio=False):
+    def __init__(
+        self,
+        text,
+        action=None,
+        checked=None,
+        enabled=True,
+        default=False,
+        radio=False,
+    ):
+        # Keep callables as-is (pystray evaluates them later with the item).
         self.text = text
         self._action = action
         self.checked = checked

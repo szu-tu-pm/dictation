@@ -159,6 +159,7 @@ class DictationApp:
         if not history:
             return [pystray.MenuItem("(No recent transcripts)", None, enabled=False)]
         items: list[pystray.MenuItem] = []
+        # Match merged PR #7 tray enrichment: show 5 recent transcripts.
         for item in history[:5]:
             full_text = item.get("text", "")
             display = (full_text[:45] + "…") if len(full_text) > 45 else full_text
@@ -227,6 +228,8 @@ class DictationApp:
             pystray.MenuItem("Open Config Folder", lambda _: self._open_folder()),
             pystray.MenuItem("Edit Vocabulary", lambda _: self._open_vocabulary()),
             pystray.MenuItem("View Log", lambda _: self._open_log()),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Recent Transcripts", pystray.Menu(self._history_menu_items)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self.quit),
         )
