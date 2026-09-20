@@ -80,22 +80,6 @@ def test_history_menu_items_copy() -> None:
         mock_copy.assert_called_once_with(long)
 
 
-<<<<<<< COMPLICATED: recent-transcripts count (PR #9 vs #7)
-# Cap assertion depends on unresolved history[:8] vs history[:5] design choice.
-# Keep both tests commented with markers until a human picks the limit.
-
-
-def test_history_menu_caps_at_eight() -> None:
-    app = DictationApp()
-    mock_history = [{"date": f"d{i}", "text": f"t{i}"} for i in range(12)]
-    with patch("dictation.app.load_history", return_value=mock_history), patch(
-        "dictation.app.copy_to_clipboard"
-    ):
-        items = app._history_menu_items()
-        assert len(items) == 8
-=======
-
-
 def test_history_menu_caps_at_five() -> None:
     app = DictationApp()
     mock_history = [{"date": f"d{i}", "text": f"t{i}"} for i in range(12)]
@@ -104,7 +88,6 @@ def test_history_menu_caps_at_five() -> None:
     ):
         items = app._history_menu_items()
         assert len(items) == 5
->>>>>>> COMPLICATED: recent-transcripts count (PR #9 vs #7)
 
 
 def test_worker_records_history_before_paste_failure() -> None:
@@ -213,11 +196,19 @@ def test_toggle_sound(tmp_path, monkeypatch) -> None:
         assert mock_save.called
 
 
-def test_audio_capture_switch_device_clears_ring_and_cancels() -> None:
+def test_audio_capture_switch_device_clears_ring_and_cancels(monkeypatch) -> None:
     import numpy as np
     from dictation.audio import AudioCapture
     from dictation.config import AppConfig
 
+    monkeypatch.setattr(
+        "dictation.audio.sd.query_devices",
+        lambda *_a, **_k: {"name": "mic", "hostapi": 0},
+    )
+    monkeypatch.setattr(
+        "dictation.audio.sd.query_hostapis",
+        lambda: [{"name": "WASAPI", "default_input_device": 0}],
+    )
     cfg = AppConfig()
     audio = AudioCapture(cfg)
     audio.ring.write(np.ones(1000, dtype=np.float32))
@@ -266,6 +257,7 @@ def test_toggle_mute_while_recording_cancels_take() -> None:
         mock_cue.assert_called_with("discard", enabled=app.cfg.sound_effects)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only (hotkey mocked on Linux)")
 def test_hook_set_enabled_false_while_down_does_not_release() -> None:
     from dictation.hotkey import RightCtrlHook
     on_press = MagicMock()

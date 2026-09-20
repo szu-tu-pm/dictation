@@ -134,14 +134,8 @@ class DictationApp:
         if not history:
             return [pystray.MenuItem("(No recent transcripts)", None, enabled=False)]
         items: list[pystray.MenuItem] = []
-<<<<<<< COMPLICATED: recent-transcripts count (PR #9 vs #7)
-# PR #9 (cursor/recent-transcripts-a531): show 8 recent transcripts
-# PR #7 / base (cursor/windows-local-dictation): show 5 recent transcripts
-# Design disagreement — do not guess; human must pick one limit.
-        for item in history[:8]:
-=======
+        # Match merged PR #7 tray enrichment: show 5 recent transcripts.
         for item in history[:5]:
->>>>>>> COMPLICATED: recent-transcripts count (PR #9 vs #7)
             full_text = item.get("text", "")
             display = (full_text[:45] + "…") if len(full_text) > 45 else full_text
             items.append(
