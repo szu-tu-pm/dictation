@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
 from pathlib import Path
 import urllib.request
 import zipfile
@@ -14,22 +15,52 @@ ProgressCb = Callable[[str, int, int], None]
 _UA = {"User-Agent": "Dictation/0.1 (Windows; local whisper.cpp)"}
 
 
+def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_sha256(path: Path, expected: str) -> None:
+    """Raise RuntimeError if path's SHA-256 does not match expected (hex, case-insensitive)."""
+    expected = (expected or "").strip().lower()
+    if not expected:
+        return
+    got = sha256_file(path)
+    if got != expected:
+        raise RuntimeError(
+            f"SHA-256 mismatch for {path.name}: expected {expected}, got {got}"
+        )
+
+
 def download_file(url: str, dest: Path, progress: ProgressCb | None, label: str) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=120) as resp, tmp.open("wb") as out:
-        total = int(resp.headers.get("Content-Length") or 0)
-        got = 0
-        while True:
-            chunk = resp.read(256 * 1024)
-            if not chunk:
-                break
-            out.write(chunk)
-            got += len(chunk)
-            if progress:
-                progress(label, got, total)
-    tmp.replace(dest)
+    try:
+        req = urllib.request.Request(url, headers=_UA)
+        with urllib.request.urlopen(req, timeout=120) as resp, tmp.open("wb") as out:
+            total = int(resp.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = resp.read(256 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                got += len(chunk)
+                if progress:
+                    progress(label, got, total)
+        tmp.replace(dest)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _safe_extract(zip_path: Path, dest: Path) -> None:
@@ -59,6 +90,11 @@ def ensure_engine(cfg: AppConfig, progress: ProgressCb | None = None) -> Path:
     zip_path = root / "whisper-vulkan-win-x64.zip"
     LOG.info("Downloading whisper.cpp Vulkan engine")
     download_file(cfg.engine_url, zip_path, progress, "engine")
+    try:
+        verify_sha256(zip_path, getattr(cfg, "engine_sha256", "") or "")
+    except RuntimeError:
+        zip_path.unlink(missing_ok=True)
+        raise
     _safe_extract(zip_path, root)
     try:
         zip_path.unlink(missing_ok=True)
@@ -78,4 +114,9 @@ def ensure_model(cfg: AppConfig, progress: ProgressCb | None = None) -> Path:
     if path.stat().st_size < 100_000_000:
         path.unlink(missing_ok=True)
         raise RuntimeError("model download looks truncated; try again")
+    try:
+        verify_sha256(path, getattr(cfg, "model_sha256", "") or "")
+    except RuntimeError:
+        path.unlink(missing_ok=True)
+        raise
     return path

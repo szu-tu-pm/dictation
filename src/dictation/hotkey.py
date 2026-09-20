@@ -84,6 +84,7 @@ class RightCtrlHook:
         self._enabled = True
         self._down_lock = threading.Lock()
         self._hook = None
+        self._hook_error = 0
         self._thread: threading.Thread | None = None
         self._thread_id = 0
         self._proc = HOOKPROC(self._ll_proc)
@@ -175,17 +176,24 @@ class RightCtrlHook:
         return int(user32.CallNextHookEx(self._hook, ncode, wparam, lparam) or 0)
 
     def start(self) -> None:
+        self._hook_error = 0
         self._thread = threading.Thread(target=self._loop, name="rctrl-hook", daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout=5):
             raise RuntimeError("Right Ctrl hook thread failed to start")
+        if not self._hook:
+            raise RuntimeError(
+                f"SetWindowsHookExW failed to install Right Ctrl hook "
+                f"(GetLastError={self._hook_error})"
+            )
 
     def _loop(self) -> None:
         self._thread_id = kernel32.GetCurrentThreadId()
         handle = kernel32.GetModuleHandleW(None)
         self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, handle, 0)
         if not self._hook:
-            LOG.error("SetWindowsHookExW failed: %s", kernel32.GetLastError())
+            self._hook_error = int(kernel32.GetLastError())
+            LOG.error("SetWindowsHookExW failed: %s", self._hook_error)
             self._ready.set()
             return
         LOG.info("Right Ctrl low-level hook installed (swallowed)")

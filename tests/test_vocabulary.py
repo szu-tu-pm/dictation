@@ -83,3 +83,26 @@ def test_load_vocabulary_creates_default(tmp_path, monkeypatch) -> None:
     loaded = load_vocabulary()
     assert loaded.words == []
     assert vocabulary_path().is_file()
+
+
+def test_load_vocabulary_quarantines_corrupt_json(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    path = vocabulary_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not-json", encoding="utf-8")
+    loaded = load_vocabulary()
+    assert loaded.words == []
+    assert path.is_file()
+    bak = path.with_name(path.name + ".bak")
+    assert bak.is_file()
+    assert bak.read_text(encoding="utf-8") == "{not-json"
+
+
+def test_load_vocabulary_quarantines_non_object(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    path = vocabulary_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[1, 2]\n", encoding="utf-8")
+    loaded = load_vocabulary()
+    assert loaded.words == []
+    assert path.with_name(path.name + ".bak").is_file()

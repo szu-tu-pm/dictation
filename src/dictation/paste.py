@@ -24,6 +24,14 @@ INPUT_KEYBOARD = 1
 KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_KEYUP = 0x0002
 VK_CONTROL = 0x11
+VK_SHIFT = 0x10
+VK_LSHIFT = 0xA0
+VK_RSHIFT = 0xA1
+VK_MENU = 0x12
+VK_LMENU = 0xA4
+VK_RMENU = 0xA5
+VK_LWIN = 0x5B
+VK_RWIN = 0x5C
 VK_V = 0x56
 
 user32.OpenClipboard.argtypes = [HWND]
@@ -352,7 +360,28 @@ def _send_unicode(text: str) -> int:
     return sent
 
 
+def _release_modifiers() -> None:
+    """Synthesize key-ups for Shift/Alt/Win so Ctrl+V is not Ctrl+Shift+V etc."""
+    vks = (
+        VK_SHIFT,
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_MENU,
+        VK_LMENU,
+        VK_RMENU,
+        VK_LWIN,
+        VK_RWIN,
+    )
+    arr = (INPUT * len(vks))()
+    for i, vk in enumerate(vks):
+        arr[i].type = INPUT_KEYBOARD
+        arr[i].ki.wVk = vk
+        arr[i].ki.dwFlags = KEYEVENTF_KEYUP
+    user32.SendInput(len(vks), arr, sizeof(INPUT))
+
+
 def _send_ctrl_v() -> None:
+    _release_modifiers()
     arr = (INPUT * 4)()
     seq = [
         (VK_CONTROL, 0),
