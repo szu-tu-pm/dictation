@@ -107,10 +107,10 @@ def test_paste_text_fallback_to_ctrl_v() -> None:
 
 def test_copy_to_clipboard_success() -> None:
     with patch("dictation.paste._set_text") as mock_set:
-        assert copy_to_clipboard("hello") is True
-        mock_set.assert_called_once_with("hello")
+        assert copy_to_clipboard("test copy") is True
+        mock_set.assert_called_once_with("test copy")
 
 
 def test_copy_to_clipboard_failure() -> None:
-    with patch("dictation.paste._set_text", side_effect=RuntimeError("clipboard locked")):
-        assert copy_to_clipboard("hello") is False
+    with patch("dictation.paste._set_text", side_effect=RuntimeError("Clipboard locked")):
+        assert copy_to_clipboard("test copy") is False

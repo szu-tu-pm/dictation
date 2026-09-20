@@ -1,11 +1,14 @@
 import sys
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Ensure Windows-only deps are mocked before dictation.app import.
+# Ensure Windows-only / GUI deps are mocked on non-Windows platforms.
 # pystray stub lives in conftest.py so MenuItem retains attributes.
 if sys.platform != "win32":
+    sys.modules.setdefault("pystray", MagicMock())
     sys.modules.setdefault("dictation.hotkey", MagicMock())
     sys.modules.setdefault("dictation.paste", MagicMock())
 
@@ -177,3 +180,114 @@ def test_refresh_icon_skips_menu_on_level_tick() -> None:
     assert not icon.update_menu.called
     app._refresh_icon(update_menu=True)
     assert icon.update_menu.called
+
+
+def test_app_audio_cues_path() -> None:
+    import numpy as np
+
+    app = DictationApp()
+    app.state = State.IDLE
+    app.engine = MagicMock(ready=True)
+    app.engine.transcribe.return_value = "hello world"
+    app.audio = MagicMock()
+    app.audio.take_slice.return_value = np.zeros(16000, dtype=np.float32)
+
+    with (
+        patch("dictation.app.play_cue") as mock_cue,
+        patch.object(app, "_refresh_icon"),
+        patch("dictation.app.paste_text"),
+        patch("dictation.app.record_dictation"),
+    ):
+        coord_thread = threading.Thread(target=app._coordinator, daemon=True)
+        worker_thread = threading.Thread(target=app._worker, daemon=True)
+        coord_thread.start()
+        worker_thread.start()
+
+        try:
+            # 1. Press -> coordinator handles "press" -> plays "start" cue
+            app._on_press()
+            for _ in range(50):
+                if app.state == State.RECORDING:
+                    break
+                time.sleep(0.02)
+            assert app.state == State.RECORDING
+            mock_cue.assert_called_with("start", enabled=True)
+
+            # 2. Release -> coordinator plays "stop" cue; worker plays "paste" cue on success
+            mock_cue.reset_mock()
+            app._on_release()
+            for _ in range(50):
+                if app.state == State.IDLE:
+                    break
+                time.sleep(0.02)
+            assert app.state == State.IDLE
+            assert mock_cue.call_count == 2
+            calls = [c.args[0] for c in mock_cue.call_args_list]
+            assert calls == ["stop", "paste"]
+
+            # 3. Discard cue when transcript is empty
+            app.engine.transcribe.return_value = ""
+            mock_cue.reset_mock()
+            app._on_press()
+            for _ in range(50):
+                if app.state == State.RECORDING:
+                    break
+                time.sleep(0.02)
+            assert app.state == State.RECORDING
+            mock_cue.assert_called_with("start", enabled=True)
+
+            mock_cue.reset_mock()
+            app._on_release()
+            for _ in range(50):
+                if app.state == State.IDLE:
+                    break
+                time.sleep(0.02)
+            assert app.state == State.IDLE
+            assert mock_cue.call_count == 2
+            calls = [c.args[0] for c in mock_cue.call_args_list]
+            assert calls == ["stop", "discard"]
+        finally:
+            app._stop.set()
+            coord_thread.join(timeout=1.0)
+            worker_thread.join(timeout=1.0)
+
+
+def test_app_on_cancel_queues_cancel() -> None:
+    app = DictationApp()
+    # When in RECORDING, returns True and queues cancel
+    app.state = State.RECORDING
+    assert app._on_cancel() is True
+    assert app._ptt.get_nowait() == "cancel"
+
+    # When not in RECORDING, returns False and does not queue cancel
+    app.state = State.IDLE
+    assert app._on_cancel() is False
+    assert app._ptt.empty()
+
+
+def test_coordinator_cancel_only_discards_if_recording() -> None:
+    app = DictationApp()
+    app.audio = MagicMock()
+    app.state = State.RECORDING
+
+    with patch("dictation.app.play_cue") as mock_cue, patch.object(app, "_refresh_icon"):
+        coord_thread = threading.Thread(target=app._coordinator, daemon=True)
+        coord_thread.start()
+        try:
+            app._ptt.put("cancel")
+            for _ in range(50):
+                if app.state == State.IDLE:
+                    break
+                time.sleep(0.02)
+            assert app.state == State.IDLE
+            assert app.audio.cancel.called
+            mock_cue.assert_called_with("discard", enabled=True)
+
+            # Now in IDLE, putting another cancel should NOT call play_cue
+            mock_cue.reset_mock()
+            app._ptt.put("cancel")
+            time.sleep(0.05)
+            assert not mock_cue.called
+        finally:
+            app._stop.set()
+            coord_thread.join(timeout=1.0)
