@@ -136,19 +136,3 @@ def test_mark_start_grows_ring_for_continuous_max(monkeypatch) -> None:
     # Continuous takes need headroom past the 62s push-to-talk ring.
     assert cap.ring.n > int(62.0 * 16000)
     assert cap.ring.n == int(122.0 * 16000)
-
-
-def test_mark_start_grows_for_continuous_max(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "dictation.audio.sd.query_devices",
-        lambda *_a, **_k: {"name": "mic", "hostapi": 0},
-    )
-    monkeypatch.setattr(
-        "dictation.audio.sd.query_hostapis",
-        lambda: [{"name": "WASAPI", "default_input_device": 0}],
-    )
-    cfg = AppConfig(max_record_seconds=60.0, continuous_max_seconds=120.0, sample_rate=16000)
-    cap = AudioCapture(cfg)
-    cap.mark_start(max_seconds=120.0)
-    # 120s + 2s headroom at 16 kHz
-    assert cap.ring.n >= int(122 * 16000)

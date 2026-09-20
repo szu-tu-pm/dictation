@@ -111,7 +111,8 @@ def test_continuous_emits_tap_immediately_on_down() -> None:
 
     g.on_down()
     assert events == ["tap"]
-    assert all(t.cancelled or not t.started for t in timers) or len(timers) == 0
+    # Immediate stop must not schedule hold/tap timers.
+    assert timers == []
     g.on_up()
     assert events == ["tap"]
 
