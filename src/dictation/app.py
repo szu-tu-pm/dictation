@@ -128,8 +128,12 @@ class DictationApp:
     def _on_release(self) -> None:
         self._ptt.put("release")
 
-    def _on_cancel(self) -> None:
-        self._ptt.put("cancel")
+    def _on_cancel(self) -> bool:
+        with self._lock:
+            if self.state is State.RECORDING:
+                self._ptt.put("cancel")
+                return True
+            return False
 
     def _recover_from_error(self, gen: int) -> None:
         with self._lock:
@@ -190,7 +194,7 @@ class DictationApp:
                         if self.audio is not None:
                             self.audio.cancel()
                         self._set_state(State.IDLE, f"Idle ({self.backend})")
-                        play_cue("discard", enabled=self.cfg.sound_effects)
+                play_cue("discard", enabled=self.cfg.sound_effects)
 
     def _worker(self) -> None:
         while not self._stop.is_set():
