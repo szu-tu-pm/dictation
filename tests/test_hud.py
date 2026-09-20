@@ -64,3 +64,32 @@ def test_hud_success_survives_idle_update() -> None:
     time.sleep(0.35)
     hud.update("idle")
     assert hud._frame.mode == "hidden"
+
+
+def test_hud_loop_skips_idle_spins(monkeypatch) -> None:
+    """Empty-queue wakes must not call _paint for static modes (CPU spin fix)."""
+    hud = HudOverlay(enabled=True)
+    hud._available = True
+    paints: list[str] = []
+    empty_wakes = {"n": 0}
+
+    monkeypatch.setattr(hud, "_create_window", lambda: None)
+    monkeypatch.setattr(hud, "_destroy_window", lambda: None)
+    monkeypatch.setattr(hud, "_paint", lambda frame: paints.append(frame.mode))
+
+    def fake_pump() -> None:
+        # After the queued paint, Empty wakes hit pump — stop after a few.
+        if not paints:
+            return
+        empty_wakes["n"] += 1
+        if empty_wakes["n"] >= 3:
+            hud._stop.set()
+
+    monkeypatch.setattr(hud, "_pump_messages", fake_pump)
+
+    hud._frame = HudFrame("recording", level=0.2)
+    hud._q.put(HudFrame("recording", level=0.5))
+    hud._loop()
+    # Only the queued frame should paint — not Empty idle spins.
+    assert paints == ["recording"]
+    assert empty_wakes["n"] >= 3

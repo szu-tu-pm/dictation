@@ -186,8 +186,10 @@ class HudOverlay:
             return
         last_paint = 0.0
         while not self._stop.is_set():
+            from_queue = False
             try:
                 frame = self._q.get(timeout=0.05)
+                from_queue = True
             except queue.Empty:
                 frame = self._frame
             if frame is None:
@@ -198,11 +200,20 @@ class HudOverlay:
                     elapsed_s=max(0.0, time.monotonic() - self._transcribe_started),
                 )
                 self._frame = frame
+            # Idle Empty wakes: only repaint animated modes (transcribing pulse).
+            # Queue updates always paint (subject to the recording throttle below).
+            if not from_queue and frame.mode != "transcribing":
+                self._pump_messages()
+                continue
             now = time.monotonic()
-            # Cap paint rate; always paint on mode changes via queue.
-            if now - last_paint < 0.05 and frame.mode == self._frame.mode == "recording":
-                # Still allow level updates at ~20 Hz from queue; skip idle spins.
-                pass
+            # Cap recording level floods at ~20 Hz.
+            if (
+                from_queue
+                and frame.mode == "recording"
+                and now - last_paint < 0.05
+            ):
+                self._pump_messages()
+                continue
             try:
                 self._paint(frame)
             except Exception:
@@ -336,80 +347,94 @@ class HudOverlay:
             bgra[i + 3] = a
 
         gdi32 = ctypes.windll.gdi32
-        hdc_screen = user32.GetDC(None)
-        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        # 64-bit: default c_int restype truncates HDC/HBITMAP handles.
+        user32.GetDC.restype = ctypes.c_void_p
+        gdi32.CreateCompatibleDC.restype = ctypes.c_void_p
+        gdi32.CreateDIBSection.restype = ctypes.c_void_p
+        gdi32.SelectObject.restype = ctypes.c_void_p
 
-        class BITMAPINFOHEADER(ctypes.Structure):
-            _fields_ = [
-                ("biSize", ctypes.c_uint32),
-                ("biWidth", ctypes.c_long),
-                ("biHeight", ctypes.c_long),
-                ("biPlanes", ctypes.c_uint16),
-                ("biBitCount", ctypes.c_uint16),
-                ("biCompression", ctypes.c_uint32),
-                ("biSizeImage", ctypes.c_uint32),
-                ("biXPelsPerMeter", ctypes.c_long),
-                ("biYPelsPerMeter", ctypes.c_long),
-                ("biClrUsed", ctypes.c_uint32),
-                ("biClrImportant", ctypes.c_uint32),
-            ]
+        hdc_screen = None
+        hdc_mem = None
+        hbmp = None
+        old = None
+        try:
+            hdc_screen = user32.GetDC(None)
+            hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
 
-        class BITMAPINFO(ctypes.Structure):
-            _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", ctypes.c_uint32 * 3)]
+            class BITMAPINFOHEADER(ctypes.Structure):
+                _fields_ = [
+                    ("biSize", ctypes.c_uint32),
+                    ("biWidth", ctypes.c_long),
+                    ("biHeight", ctypes.c_long),
+                    ("biPlanes", ctypes.c_uint16),
+                    ("biBitCount", ctypes.c_uint16),
+                    ("biCompression", ctypes.c_uint32),
+                    ("biSizeImage", ctypes.c_uint32),
+                    ("biXPelsPerMeter", ctypes.c_long),
+                    ("biYPelsPerMeter", ctypes.c_long),
+                    ("biClrUsed", ctypes.c_uint32),
+                    ("biClrImportant", ctypes.c_uint32),
+                ]
 
-        bmi = BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = w
-        bmi.bmiHeader.biHeight = -h  # top-down
-        bmi.bmiHeader.biPlanes = 1
-        bmi.bmiHeader.biBitCount = 32
-        bmi.bmiHeader.biCompression = 0
-        bits = ctypes.c_void_p()
-        hbmp = gdi32.CreateDIBSection(
-            hdc_mem, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0
-        )
-        if not hbmp or not bits:
-            gdi32.DeleteDC(hdc_mem)
-            user32.ReleaseDC(None, hdc_screen)
-            return
-        ctypes.memmove(bits, bytes(bgra), len(bgra))
-        old = gdi32.SelectObject(hdc_mem, hbmp)
+            class BITMAPINFO(ctypes.Structure):
+                _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", ctypes.c_uint32 * 3)]
 
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = w
+            bmi.bmiHeader.biHeight = -h  # top-down
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = 0
+            bits = ctypes.c_void_p()
+            hbmp = gdi32.CreateDIBSection(
+                hdc_mem, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0
+            )
+            if not hbmp or not bits:
+                return
+            ctypes.memmove(bits, bytes(bgra), len(bgra))
+            old = gdi32.SelectObject(hdc_mem, hbmp)
 
-        class SIZE(ctypes.Structure):
-            _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
-        class BLENDFUNCTION(ctypes.Structure):
-            _fields_ = [
-                ("BlendOp", ctypes.c_byte),
-                ("BlendFlags", ctypes.c_byte),
-                ("SourceConstantAlpha", ctypes.c_byte),
-                ("AlphaFormat", ctypes.c_byte),
-            ]
+            class SIZE(ctypes.Structure):
+                _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
 
-        pt_dst = POINT(x, y)
-        pt_src = POINT(0, 0)
-        size = SIZE(w, h)
-        blend = BLENDFUNCTION(0, 0, 255, 1)  # AC_SRC_OVER, AC_SRC_ALPHA
-        ULW_ALPHA = 0x00000002
-        user32.UpdateLayeredWindow(
-            self._hwnd,
-            hdc_screen,
-            ctypes.byref(pt_dst),
-            ctypes.byref(size),
-            hdc_mem,
-            ctypes.byref(pt_src),
-            0,
-            ctypes.byref(blend),
-            ULW_ALPHA,
-        )
-        user32.ShowWindow(self._hwnd, 8)  # SW_SHOWNA — show without activate
-        gdi32.SelectObject(hdc_mem, old)
-        gdi32.DeleteObject(hbmp)
-        gdi32.DeleteDC(hdc_mem)
-        user32.ReleaseDC(None, hdc_screen)
+            class BLENDFUNCTION(ctypes.Structure):
+                _fields_ = [
+                    ("BlendOp", ctypes.c_byte),
+                    ("BlendFlags", ctypes.c_byte),
+                    ("SourceConstantAlpha", ctypes.c_byte),
+                    ("AlphaFormat", ctypes.c_byte),
+                ]
+
+            pt_dst = POINT(x, y)
+            pt_src = POINT(0, 0)
+            size = SIZE(w, h)
+            blend = BLENDFUNCTION(0, 0, 255, 1)  # AC_SRC_OVER, AC_SRC_ALPHA
+            ULW_ALPHA = 0x00000002
+            user32.UpdateLayeredWindow(
+                self._hwnd,
+                hdc_screen,
+                ctypes.byref(pt_dst),
+                ctypes.byref(size),
+                hdc_mem,
+                ctypes.byref(pt_src),
+                0,
+                ctypes.byref(blend),
+                ULW_ALPHA,
+            )
+            user32.ShowWindow(self._hwnd, 8)  # SW_SHOWNA — show without activate
+        finally:
+            if hdc_mem is not None and old is not None:
+                gdi32.SelectObject(hdc_mem, old)
+            if hbmp:
+                gdi32.DeleteObject(hbmp)
+            if hdc_mem:
+                gdi32.DeleteDC(hdc_mem)
+            if hdc_screen:
+                user32.ReleaseDC(None, hdc_screen)
 
     def _pump_messages(self) -> None:
         import ctypes
