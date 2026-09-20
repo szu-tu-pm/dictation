@@ -31,6 +31,7 @@ def test_load_creates_defaults(tmp_path, monkeypatch) -> None:
     assert loaded.hold_ms == 250
     assert loaded.double_tap_ms == 350
     assert loaded.preroll_ms == 350
+    assert loaded.hud_enabled is True
     assert config_path().is_file()
 
 
