@@ -345,3 +345,14 @@ def paste_text(text: str) -> None:
             _restore(snapshot)
         except Exception:
             LOG.exception("clipboard restore failed")
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Set text onto the Windows clipboard, replacing current clipboard content."""
+    try:
+        _set_text(text)
+        LOG.info("copied %s chars to clipboard", len(text))
+        return True
+    except Exception:
+        LOG.exception("failed to copy text to clipboard")
+        return False

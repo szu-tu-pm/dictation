@@ -63,6 +63,7 @@ This suite runs quickly and does **not** download the 1.6 GB Whisper model. Test
 | `tests/test_hotkey.py` | `_is_right_ctrl` scancode and extended flag parsing, Left Ctrl isolation, `force_release` state transitions, typematic repeat handling |
 | `tests/test_paste.py` | Unicode `SendInput` primary path (no clipboard touches), emoji & surrogate pair support, newline normalization, reachable clipboard fallback |
 | `tests/test_app_state.py` | App lifecycle states (`STARTING` -> `IDLE` -> `RECORDING` -> `TRANSCRIBING`), error recovery generation counter, download progress throttling |
+| `tests/test_app_tray.py` | Recent Transcripts submenu, clipboard copy action, history recorded before paste failure |
 | `tests/test_logutil.py` | Logging setup idempotency, formatting, and file handler initialization |
 | `tests/test_assets_zip.py` | Zip extraction safety, path traversal (Zip-Slip) rejection, engine readiness detection |
 | `tests/test_icons.py` | Tray icon generation across all 6 states (`idle`, `recording`, `transcribing`, etc.) |
@@ -165,7 +166,8 @@ Keep the app running. Copy this list and tick as you go.
 
 1. Open Notepad **as Administrator**.
 2. From a normal (non-admin) dictation process, try to dictate into it.
-3. **Pass:** paste fails or does nothing. This is expected UIPI. Dictate into a normal window instead, or run dictation elevated if you truly need admin targets.
+3. **Pass:** paste fails or does nothing. This is expected UIPI. Tray status should mention **Recent Transcripts**.
+4. **Pass:** tray → **Recent Transcripts** → click the take → clipboard has the transcript; paste it into a normal window.
 
 ### J. Quit
 

@@ -12,11 +12,11 @@ import pystray
 from dictation.assets import ensure_engine, ensure_model
 from dictation.audio import AudioCapture, find_wasapi_input, peak_abs, rms
 from dictation.config import load_config
-from dictation.history import record_dictation
+from dictation.history import load_history, record_dictation
 from dictation.hotkey import RightCtrlHook
 from dictation.icons import tray_icon
 from dictation.logutil import LOG, setup_logging
-from dictation.paste import paste_text
+from dictation.paste import copy_to_clipboard, paste_text
 from dictation.paths import appdata_dir, config_path, history_path, log_path, vocabulary_path
 from dictation.transcribe import WhisperEngine, load_wav_mono
 
@@ -88,9 +88,27 @@ class DictationApp:
         except Exception:
             pass
 
+    def _history_menu_items(self) -> list[pystray.MenuItem]:
+        history = load_history()
+        if not history:
+            return [pystray.MenuItem("(No recent transcripts)", None, enabled=False)]
+        items: list[pystray.MenuItem] = []
+        for item in history[:8]:
+            full_text = item.get("text", "")
+            display = (full_text[:45] + "…") if len(full_text) > 45 else full_text
+            items.append(
+                pystray.MenuItem(
+                    display,
+                    (lambda txt: lambda _: copy_to_clipboard(txt))(full_text),
+                )
+            )
+        return items
+
     def _menu(self) -> pystray.Menu:
         return pystray.Menu(
             pystray.MenuItem(lambda _: self.status, None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Recent Transcripts", pystray.Menu(self._history_menu_items)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self.quit),
         )
@@ -203,13 +221,27 @@ class DictationApp:
                 text = self.engine.transcribe(samples)  # type: ignore[arg-type]
                 if text:
                     LOG.info("transcript: %s", text)
-                    to_paste = text if text.endswith((" ", "\n")) else text + " "
-                    paste_text(to_paste)
+                    # Persist before paste so elevated/UIPI targets still have a
+                    # clipboard safety net via Recent Transcripts.
                     record_dictation(text)
+                    to_paste = text if text.endswith((" ", "\n")) else text + " "
+                    try:
+                        paste_text(to_paste)
+                    except Exception:
+                        LOG.exception("paste failed")
+                        with self._lock:
+                            self._error_gen += 1
+                            gen = self._error_gen
+                            self._set_state(
+                                State.ERROR,
+                                "Paste failed — use Recent Transcripts",
+                            )
+                        threading.Timer(2.0, self._recover_from_error, args=(gen,)).start()
+                        continue
                 else:
                     LOG.info("nothing to paste")
             except Exception:
-                LOG.exception("transcribe/paste failed")
+                LOG.exception("transcribe failed")
                 with self._lock:
                     self._error_gen += 1
                     gen = self._error_gen

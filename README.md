@@ -52,12 +52,13 @@ python -m dictation
 1. Focus Notepad, VS Code, Discord, Slack, or any window that accepts text.
 2. **Hold Right Ctrl** and speak naturally.
 3. **Release Right Ctrl** — after a short transcription delay, text appears at the caret, with a trailing space so the next utterance continues the sentence.
-4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Transcribing…`. The recording icon grows with microphone level. Right-click the tray icon and choose **Quit** to stop.
+4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Transcribing…`. The recording icon grows with microphone level. Right-click the tray icon for **Recent Transcripts** (copies a past take to the clipboard) or **Quit**.
 
 **Key behavior:**
 - Right Ctrl is **swallowed** while held so it never reaches other programs. Typing S or W while talking will not trigger Save or Close Tab.
 - **Left Ctrl is untouched** — `Left Ctrl + S` still saves normally.
 - Accidental taps shorter than ~200 ms, or near-silent audio takes, are automatically ignored.
+- If paste fails (for example into an elevated window), the tray shows `Paste failed — use Recent Transcripts`. The take is still saved under **Recent Transcripts** so you can copy it manually.
 
 ---
 
@@ -106,7 +107,7 @@ Names and jargon live in `%APPDATA%\Dictation\vocabulary.json` (created on first
 }
 ```
 
-`words` and replacement targets are fed to Whisper as an `initial_prompt`. After transcription, `replacements` are applied as whole-word, case-insensitive substitutions. Successful pastes are appended to `%APPDATA%\Dictation\history.json` (last 200).
+`words` and replacement targets are fed to Whisper as an `initial_prompt`. After transcription, `replacements` are applied as whole-word, case-insensitive substitutions. Successful transcriptions are appended to `%APPDATA%\Dictation\history.json` (last 200) **before** paste, so a blocked paste still appears under **Recent Transcripts**.
 
 To time the engine without the hotkey or paste path:
 

@@ -7,7 +7,7 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 
 if sys.platform == "win32":
     import dictation.paste as paste_mod
-    from dictation.paste import paste_text
+    from dictation.paste import copy_to_clipboard, paste_text
 
 
 def test_send_unicode_empty() -> None:
@@ -104,3 +104,13 @@ def test_paste_text_fallback_to_ctrl_v() -> None:
         assert mock_ctrl_v.called
         assert mock_wait.called
         mock_restore.assert_called_once_with({13: b"abc"})
+
+def test_copy_to_clipboard_success() -> None:
+    with patch("dictation.paste._set_text") as mock_set:
+        assert copy_to_clipboard("hello") is True
+        mock_set.assert_called_once_with("hello")
+
+
+def test_copy_to_clipboard_failure() -> None:
+    with patch("dictation.paste._set_text", side_effect=RuntimeError("clipboard locked")):
+        assert copy_to_clipboard("hello") is False
