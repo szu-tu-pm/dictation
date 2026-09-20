@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+from pathlib import Path
 import re
 from typing import Any
 
+from dictation.fileutil import atomic_write_text, quarantine_corrupt
+from dictation.logutil import LOG
 from dictation.paths import vocabulary_path
 
 PROMPT_CHAR_LIMIT = 400
@@ -63,6 +66,19 @@ def _parse_replacements(raw: Any) -> list[Replacement]:
     return out
 
 
+def _recover_empty(path: Path, reason: str) -> Vocabulary:
+    LOG.warning("vocabulary %s (%s); using empty vocabulary", path, reason)
+    if path.exists():
+        try:
+            bak = quarantine_corrupt(path)
+            LOG.warning("moved corrupt vocabulary to %s", bak)
+        except OSError:
+            LOG.exception("failed to quarantine corrupt vocabulary %s", path)
+    vocab = Vocabulary()
+    save_vocabulary(vocab)
+    return vocab
+
+
 def load_vocabulary() -> Vocabulary:
     path = vocabulary_path()
     if not path.exists():
@@ -71,10 +87,12 @@ def load_vocabulary() -> Vocabulary:
         return vocab
     try:
         raw: Any = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return Vocabulary()
+    except json.JSONDecodeError as exc:
+        return _recover_empty(path, f"invalid JSON: {exc}")
+    except OSError as exc:
+        return _recover_empty(path, f"read error: {exc}")
     if not isinstance(raw, dict):
-        return Vocabulary()
+        return _recover_empty(path, "JSON root is not an object")
     words_raw = raw.get("words", [])
     words = [str(w).strip() for w in words_raw] if isinstance(words_raw, list) else []
     words = [w for w in words if w]
@@ -87,7 +105,7 @@ def save_vocabulary(vocab: Vocabulary) -> None:
         "words": vocab.words,
         "replacements": [{"heard": r.heard, "meant": r.meant} for r in vocab.replacements],
     }
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
 
 
 def _boundary_pattern(term: str) -> str:
