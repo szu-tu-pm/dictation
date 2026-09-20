@@ -94,6 +94,7 @@ Unicode `SendInput` is the primary path (typing characters directly at the caret
 | `max_record_seconds` | `60` | Auto-release watchdog if key hold exceeds this duration |
 | `energy_threshold` | `0.008` | RMS energy floor to drop silent takes |
 | `model_filename` | `ggml-large-v3-turbo.bin` | ggml file under `models\` |
+| `sound_effects` | `true` | Subtle audio cues (earcons) on start, stop, paste, and discard |
 
 Names and jargon live in `%APPDATA%\Dictation\vocabulary.json` (created on first use):
 

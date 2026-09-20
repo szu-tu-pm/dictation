@@ -35,6 +35,7 @@ class AppConfig:
     engine_url: str = ENGINE_ZIP_URL
     model_url: str = MODEL_URL
     model_filename: str = MODEL_FILENAME
+    sound_effects: bool = True
 
 
 def load_config() -> AppConfig:
