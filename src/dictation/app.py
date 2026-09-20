@@ -18,6 +18,7 @@ from dictation.icons import tray_icon
 from dictation.logutil import LOG, setup_logging
 from dictation.paste import paste_text
 from dictation.paths import appdata_dir, config_path, history_path, log_path, vocabulary_path
+from dictation.sound import play_cue
 from dictation.transcribe import WhisperEngine, load_wav_mono
 
 
@@ -172,11 +173,13 @@ class DictationApp:
                     self.audio.mark_start()
                     self._record_started = time.monotonic()
                     self._set_state(State.RECORDING, "Recording")
+                    play_cue("start", enabled=self.cfg.sound_effects)
             elif ev == "release":
                 with self._lock:
                     if self.state is not State.RECORDING or self.audio is None:
                         continue
                     self._set_state(State.TRANSCRIBING, "Transcribing…")
+                    play_cue("stop", enabled=self.cfg.sound_effects)
                 self._jobs.put("slice")
 
     def _worker(self) -> None:
@@ -206,10 +209,13 @@ class DictationApp:
                     to_paste = text if text.endswith((" ", "\n")) else text + " "
                     paste_text(to_paste)
                     record_dictation(text)
+                    play_cue("paste", enabled=self.cfg.sound_effects)
                 else:
                     LOG.info("nothing to paste")
+                    play_cue("discard", enabled=self.cfg.sound_effects)
             except Exception:
                 LOG.exception("transcribe/paste failed")
+                play_cue("discard", enabled=self.cfg.sound_effects)
                 with self._lock:
                     self._error_gen += 1
                     gen = self._error_gen
