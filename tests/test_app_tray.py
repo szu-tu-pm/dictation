@@ -111,3 +111,62 @@ def test_quick_links(tmp_path, monkeypatch) -> None:
     with patch("os.startfile", create=True) as mock_startfile:
         app._open_log()
         assert mock_startfile.called
+
+
+def test_device_switch_failure_does_not_save_config(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    app = DictationApp()
+    app.cfg.device = None
+    mock_audio = MagicMock()
+    mock_audio.switch_device.side_effect = RuntimeError("Device unavailable")
+    app.audio = mock_audio
+
+    with pytest.raises(RuntimeError, match="Device unavailable"), patch("dictation.app.save_config") as mock_save:
+        app._set_device(99)
+        assert not mock_save.called
+    assert app.cfg.device is None
+
+
+def test_device_switch_while_recording_cancels_take() -> None:
+    app = DictationApp()
+    app.state = State.RECORDING
+    mock_audio = MagicMock()
+    app.audio = mock_audio
+
+    with patch("dictation.app.play_cue") as mock_cue, patch("dictation.app.save_config"):
+        app._set_device(2)
+        mock_audio.cancel.assert_called_once()
+        assert app.state == State.IDLE
+        mock_cue.assert_called_with("discard", enabled=app.cfg.sound_effects)
+        mock_audio.switch_device.assert_called_with(2)
+
+
+def test_toggle_mute_while_recording_cancels_take() -> None:
+    app = DictationApp()
+    app.state = State.RECORDING
+    mock_audio = MagicMock()
+    app.audio = mock_audio
+    app.icon = MagicMock()
+
+    with patch("dictation.app.play_cue") as mock_cue:
+        app._toggle_mute()
+        assert app.muted is True
+        mock_audio.cancel.assert_called_once()
+        assert app.state == State.IDLE
+        mock_cue.assert_called_with("discard", enabled=app.cfg.sound_effects)
+
+
+def test_hook_set_enabled_false_while_down_cancels_not_releases() -> None:
+    from dictation.hotkey import RightCtrlHook
+    on_press = MagicMock()
+    on_release = MagicMock()
+    on_cancel = MagicMock()
+    hook = RightCtrlHook(on_press, on_release, on_cancel)
+
+    with hook._down_lock:
+        hook._down = True
+
+    hook.set_enabled(False)
+    assert hook.down is False
+    assert on_cancel.called
+    assert not on_release.called

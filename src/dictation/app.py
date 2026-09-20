@@ -63,9 +63,9 @@ class DictationApp:
             self.status = status
             if log:
                 LOG.info("state=%s %s", state.value, status)
-            self._refresh_icon(update_menu=True)
+            self._refresh_icon(update_menu=False)
 
-    def _refresh_icon(self, *, update_menu: bool = True) -> None:
+    def _refresh_icon(self, *, update_menu: bool = False) -> None:
         if self.icon is None:
             return
         if self.muted:
@@ -97,11 +97,17 @@ class DictationApp:
             pass
 
     def _set_device(self, dev_idx: int | None) -> None:
-        self.cfg.device = dev_idx
-        save_config(self.cfg)
-        if self.audio is not None:
-            self.audio.switch_device(dev_idx)
-        self._refresh_icon()
+        with self._lock:
+            if self.state is State.RECORDING:
+                if self.audio is not None:
+                    self.audio.cancel()
+                self._set_state(State.IDLE, f"Idle ({self.backend})")
+                play_cue("discard", enabled=self.cfg.sound_effects)
+            if self.audio is not None:
+                self.audio.switch_device(dev_idx)
+            self.cfg.device = dev_idx
+            save_config(self.cfg)
+        self._refresh_icon(update_menu=True)
 
     def _device_menu_items(self) -> list[pystray.MenuItem]:
         items: list[pystray.MenuItem] = [
@@ -143,7 +149,13 @@ class DictationApp:
         self.muted = not self.muted
         if self.hook is not None:
             self.hook.set_enabled(not self.muted)
-        self._refresh_icon()
+        with self._lock:
+            if self.muted and self.state is State.RECORDING:
+                if self.audio is not None:
+                    self.audio.cancel()
+                self._set_state(State.IDLE, f"Idle ({self.backend})")
+                play_cue("discard", enabled=self.cfg.sound_effects)
+        self._refresh_icon(update_menu=True)
 
     def _open_folder(self) -> None:
         if hasattr(os, "startfile"):
