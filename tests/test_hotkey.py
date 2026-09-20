@@ -200,3 +200,28 @@ def test_hook_escape_passed_through_when_not_down() -> None:
     ret = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
     assert ret == 0
     assert on_cancel.call_count == 0
+
+
+def test_hook_disabled_passthrough() -> None:
+    on_press = MagicMock()
+    on_release = MagicMock()
+    hook = RightCtrlHook(on_press, on_release)
+    assert hook.enabled is True
+
+    # Disable hook (e.g. muted)
+    hook.set_enabled(False)
+    assert hook.enabled is False
+
+    # Right Ctrl should not be swallowed
+    data_down = _make_kbd_struct(vk=VK_RCONTROL, flags=0)
+    ret = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(data_down))
+    assert ret == 0
+    assert hook.down is False
+    assert on_press.call_count == 0
+
+    # Re-enable
+    hook.set_enabled(True)
+    ret = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(data_down))
+    assert ret == 1
+    assert hook.down is True
+    assert on_press.call_count == 1
