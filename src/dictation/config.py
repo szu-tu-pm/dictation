@@ -26,12 +26,16 @@ class AppConfig:
     language: str = "en"
     device: int | None = None
     sample_rate: int = 16000
-    preroll_ms: int = 200
+    # Must cover hold_ms classification delay so the first syllable is kept.
+    preroll_ms: int = 350
     suffix_ms: int = 80
     min_hold_ms: int = 200
     energy_threshold: float = 0.008
     ring_seconds: float = 30.0
     max_record_seconds: float = 60.0
+    continuous_max_seconds: float = 120.0
+    hold_ms: int = 250
+    double_tap_ms: int = 350
     engine_url: str = ENGINE_ZIP_URL
     model_url: str = MODEL_URL
     model_filename: str = MODEL_FILENAME

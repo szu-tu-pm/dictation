@@ -56,6 +56,7 @@ class DictationApp:
         self._progress_last_ts = 0.0
         self._record_started = 0.0
         self._level_ui_ts = 0.0
+        self.continuous = False
 
     def _set_state(self, state: State, status: str, *, log: bool = True) -> None:
         with self._lock:
@@ -101,6 +102,9 @@ class DictationApp:
             if self.state is State.RECORDING:
                 if self.audio is not None:
                     self.audio.cancel()
+                self.continuous = False
+                if self.hook is not None:
+                    self.hook.set_continuous(False)
                 self._set_state(State.IDLE, f"Idle ({self.backend})")
                 play_cue("discard", enabled=self.cfg.sound_effects)
             if self.audio is not None:
@@ -153,6 +157,9 @@ class DictationApp:
             if self.muted and self.state is State.RECORDING:
                 if self.audio is not None:
                     self.audio.cancel()
+                self.continuous = False
+                if self.hook is not None:
+                    self.hook.set_continuous(False)
                 self._set_state(State.IDLE, f"Idle ({self.backend})")
                 play_cue("discard", enabled=self.cfg.sound_effects)
         self._refresh_icon(update_menu=True)
@@ -183,6 +190,11 @@ class DictationApp:
             pystray.MenuItem(lambda _: self.status if not self.muted else "Muted", None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Microphone", pystray.Menu(self._device_menu_items)),
+            pystray.MenuItem(
+                "Continuous Mode",
+                self._toggle_continuous,
+                checked=lambda _: self.continuous,
+            ),
             pystray.MenuItem("Recent Transcripts", pystray.Menu(self._history_menu_items)),
             pystray.MenuItem("Mute Dictation", self._toggle_mute, checked=lambda _: self.muted),
             pystray.MenuItem(
@@ -197,6 +209,9 @@ class DictationApp:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self.quit),
         )
+
+    def _toggle_continuous(self, icon=None, item=None) -> None:  # noqa: ANN001
+        self._ptt.put("continuous_toggle")
 
     def _on_progress(self, label: str, got: int, total: int) -> None:
         now = time.monotonic()
@@ -224,11 +239,8 @@ class DictationApp:
                 self._progress_last_ts = now
             self._set_state(State.DOWNLOADING, f"Downloading {label}…")
 
-    def _on_press(self) -> None:
-        self._ptt.put("press")
-
-    def _on_release(self) -> None:
-        self._ptt.put("release")
+    def _on_hotkey_event(self, ev: str) -> None:
+        self._ptt.put(ev)
 
     def _on_cancel(self) -> bool:
         with self._lock:
@@ -243,6 +255,32 @@ class DictationApp:
                 return
             self._set_state(State.IDLE, f"Idle ({self.backend})")
 
+    def _start_recording(self, *, continuous: bool) -> bool:
+        """Begin a take. Caller must hold self._lock."""
+        if self.state is not State.IDLE or self.engine is None or not self.engine.ready:
+            return False
+        if self.audio is None:
+            return False
+        limit = self.cfg.continuous_max_seconds if continuous else self.cfg.max_record_seconds
+        self.audio.mark_start(max_seconds=limit)
+        self._record_started = time.monotonic()
+        self.continuous = continuous
+        if self.hook is not None:
+            self.hook.set_continuous(continuous)
+        label = "Recording (continuous)" if continuous else "Recording"
+        self._set_state(State.RECORDING, label)
+        return True
+
+    def _stop_recording(self) -> bool:
+        """End a take and enqueue transcription. Caller must hold self._lock."""
+        if self.state is not State.RECORDING or self.audio is None:
+            return False
+        self.continuous = False
+        if self.hook is not None:
+            self.hook.set_continuous(False)
+        self._set_state(State.TRANSCRIBING, "Transcribing…")
+        return True
+
     def _coordinator(self) -> None:
         while not self._stop.is_set():
             if self.audio is not None:
@@ -252,10 +290,20 @@ class DictationApp:
 
             with self._lock:
                 recording = self.state is State.RECORDING
-            if recording and self.hook is not None:
+                continuous = self.continuous
+            if recording:
                 elapsed = time.monotonic() - self._record_started
-                if elapsed >= self.cfg.max_record_seconds:
-                    self.hook.force_release("max_record_seconds")
+                limit = (
+                    self.cfg.continuous_max_seconds
+                    if continuous
+                    else self.cfg.max_record_seconds
+                )
+                if elapsed >= limit:
+                    if continuous:
+                        LOG.info("continuous watchdog: %.0fs", limit)
+                        self._ptt.put("stop")
+                    elif self.hook is not None:
+                        self.hook.force_release("max_record_seconds")
             # Do not poll GetAsyncKeyState for Right Ctrl. The hook swallows the
             # key, so Windows key state stays "up" and a physical-up watchdog
             # would stop recording after ~50ms while the user is still holding.
@@ -273,23 +321,69 @@ class DictationApp:
                 ev = self._ptt.get(timeout=0.05)
             except queue.Empty:
                 continue
+
             if ev == "press":
+                started = False
+                stopped = False
                 with self._lock:
-                    if self.state is not State.IDLE or self.engine is None or not self.engine.ready:
-                        continue
-                    if self.audio is None:
-                        continue
-                    self.audio.mark_start()
-                    self._record_started = time.monotonic()
-                    self._set_state(State.RECORDING, "Recording")
-                play_cue("start", enabled=self.cfg.sound_effects)
-            elif ev == "release":
+                    if self.continuous and self.state is State.RECORDING:
+                        stopped = self._stop_recording()
+                    else:
+                        started = self._start_recording(continuous=False)
+                if started:
+                    play_cue("start", enabled=self.cfg.sound_effects)
+                if stopped:
+                    play_cue("stop", enabled=self.cfg.sound_effects)
+                    self._jobs.put("slice")
+            elif ev in ("release", "stop"):
+                stopped = False
                 with self._lock:
-                    if self.state is not State.RECORDING or self.audio is None:
-                        continue
-                    self._set_state(State.TRANSCRIBING, "Transcribing…")
-                play_cue("stop", enabled=self.cfg.sound_effects)
-                self._jobs.put("slice")
+                    stopped = self._stop_recording()
+                if stopped:
+                    play_cue("stop", enabled=self.cfg.sound_effects)
+                    self._jobs.put("slice")
+            elif ev == "tap":
+                # Idle accidental tap: ignore. Continuous: stop immediately.
+                stopped = False
+                with self._lock:
+                    if self.continuous and self.state is State.RECORDING:
+                        stopped = self._stop_recording()
+                if stopped:
+                    play_cue("stop", enabled=self.cfg.sound_effects)
+                    self._jobs.put("slice")
+            elif ev == "double_tap":
+                started = False
+                stopped = False
+                with self._lock:
+                    if self.state is State.RECORDING and self.continuous:
+                        stopped = self._stop_recording()
+                    else:
+                        started = self._start_recording(continuous=True)
+                if started:
+                    play_cue("start", enabled=self.cfg.sound_effects)
+                if stopped:
+                    play_cue("stop", enabled=self.cfg.sound_effects)
+                    self._jobs.put("slice")
+            elif ev == "continuous_toggle":
+                started = False
+                stopped = False
+                with self._lock:
+                    if self.continuous and self.state is State.RECORDING:
+                        stopped = self._stop_recording()
+                    elif self.state is State.IDLE:
+                        started = self._start_recording(continuous=True)
+                    else:
+                        self.continuous = False
+                        if self.hook is not None:
+                            self.hook.set_continuous(False)
+                        self._refresh_icon(update_menu=True)
+                if started:
+                    play_cue("start", enabled=self.cfg.sound_effects)
+                if stopped:
+                    play_cue("stop", enabled=self.cfg.sound_effects)
+                    self._jobs.put("slice")
+                else:
+                    self._refresh_icon(update_menu=True)
             elif ev == "cancel":
                 was_recording = False
                 with self._lock:
@@ -297,9 +391,13 @@ class DictationApp:
                         was_recording = True
                         if self.audio is not None:
                             self.audio.cancel()
+                        self.continuous = False
+                        if self.hook is not None:
+                            self.hook.set_continuous(False)
                         self._set_state(State.IDLE, f"Idle ({self.backend})")
                 if was_recording:
                     play_cue("discard", enabled=self.cfg.sound_effects)
+                self._refresh_icon(update_menu=True)
 
     def _worker(self) -> None:
         while not self._stop.is_set():
@@ -325,15 +423,30 @@ class DictationApp:
                 text = self.engine.transcribe(samples)  # type: ignore[arg-type]
                 if text:
                     LOG.info("transcript: %s", text)
-                    to_paste = text if text.endswith((" ", "\n")) else text + " "
-                    paste_text(to_paste)
+                    # Persist before paste so elevated/UIPI targets still have a
+                    # clipboard safety net via Recent Transcripts.
                     record_dictation(text)
+                    to_paste = text if text.endswith((" ", "\n")) else text + " "
+                    try:
+                        paste_text(to_paste)
+                    except Exception:
+                        LOG.exception("paste failed")
+                        play_cue("discard", enabled=self.cfg.sound_effects)
+                        with self._lock:
+                            self._error_gen += 1
+                            gen = self._error_gen
+                            self._set_state(
+                                State.ERROR,
+                                "Paste failed — use Recent Transcripts",
+                            )
+                        threading.Timer(2.0, self._recover_from_error, args=(gen,)).start()
+                        continue
                     play_cue("paste", enabled=self.cfg.sound_effects)
                 else:
                     LOG.info("nothing to paste")
                     play_cue("discard", enabled=self.cfg.sound_effects)
             except Exception:
-                LOG.exception("transcribe/paste failed")
+                LOG.exception("transcribe failed")
                 play_cue("discard", enabled=self.cfg.sound_effects)
                 with self._lock:
                     self._error_gen += 1
@@ -362,7 +475,12 @@ class DictationApp:
             if self._stop.is_set():
                 return
             self.backend = self.engine.backend
-            self.hook = RightCtrlHook(self._on_press, self._on_release, self._on_cancel)
+            self.hook = RightCtrlHook(
+                self._on_hotkey_event,
+                self._on_cancel,
+                hold_ms=self.cfg.hold_ms,
+                double_tap_ms=self.cfg.double_tap_ms,
+            )
             self.hook.set_enabled(not self.muted)
             self.hook.start()
             self._set_state(State.IDLE, f"Idle ({self.backend})")
@@ -450,12 +568,13 @@ def run_check() -> int:
     print(f"log:    {log_path()}")
     device = find_wasapi_input(cfg.device)
     print(f"WASAPI input device: {device}")
-    hook = RightCtrlHook(lambda: None, lambda: None)
+    hook = RightCtrlHook(lambda _ev: None)
     hook.start()
     print("Right Ctrl hook: installed")
     hook.stop()
     print("Right Ctrl hook: removed")
     print("Hold Right Ctrl to talk after `python -m dictation`.")
+    print("Double-tap Right Ctrl (or tray Continuous Mode) for hands-free dictation.")
     return 0
 
 

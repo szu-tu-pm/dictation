@@ -19,7 +19,7 @@ def test_wasapi_device_exists() -> None:
 def test_right_ctrl_hook_installs() -> None:
     from dictation.hotkey import RightCtrlHook
 
-    hook = RightCtrlHook(lambda: None, lambda: None)
+    hook = RightCtrlHook(lambda _ev: None)
     hook.start()
     try:
         assert hook._hook

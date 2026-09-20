@@ -5,9 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Ensure Windows-only / GUI deps are mocked on non-Windows platforms
+# Ensure Windows-only / GUI deps are mocked on non-Windows platforms.
+# pystray stub lives in conftest.py so MenuItem retains attributes.
 if sys.platform != "win32":
-    sys.modules.setdefault("pystray", MagicMock())
     sys.modules.setdefault("dictation.hotkey", MagicMock())
     sys.modules.setdefault("dictation.paste", MagicMock())
 
@@ -19,6 +19,9 @@ def test_tray_menu_structure() -> None:
     app = DictationApp()
     menu = app._menu()
     assert menu is not None
+    # Continuous Mode is a top-level tray item (checked via construction).
+    app._toggle_continuous()
+    assert app._ptt.get_nowait() == "continuous_toggle"
     # Verify submenu items exist
     dev_items = app._device_menu_items()
     assert len(dev_items) >= 1
@@ -150,11 +153,19 @@ def test_toggle_sound(tmp_path, monkeypatch) -> None:
         assert mock_save.called
 
 
-def test_audio_capture_switch_device_clears_ring_and_cancels() -> None:
+def test_audio_capture_switch_device_clears_ring_and_cancels(monkeypatch) -> None:
     import numpy as np
     from dictation.audio import AudioCapture
     from dictation.config import AppConfig
 
+    monkeypatch.setattr(
+        "dictation.audio.sd.query_devices",
+        lambda *_a, **_k: {"name": "mic", "hostapi": 0},
+    )
+    monkeypatch.setattr(
+        "dictation.audio.sd.query_hostapis",
+        lambda: [{"name": "WASAPI", "default_input_device": 0}],
+    )
     cfg = AppConfig()
     audio = AudioCapture(cfg)
     audio.ring.write(np.ones(1000, dtype=np.float32))
@@ -177,13 +188,17 @@ def test_audio_capture_switch_device_clears_ring_and_cancels() -> None:
 def test_device_switch_while_recording_cancels_take() -> None:
     app = DictationApp()
     app.state = State.RECORDING
+    app.continuous = True
     mock_audio = MagicMock()
     app.audio = mock_audio
+    app.hook = MagicMock()
 
     with patch("dictation.app.play_cue") as mock_cue, patch("dictation.app.save_config"):
         app._set_device(2)
         mock_audio.cancel.assert_called_once()
         assert app.state == State.IDLE
+        assert app.continuous is False
+        app.hook.set_continuous.assert_called_with(False)
         mock_cue.assert_called_with("discard", enabled=app.cfg.sound_effects)
         mock_audio.switch_device.assert_called_with(2)
 
@@ -191,28 +206,33 @@ def test_device_switch_while_recording_cancels_take() -> None:
 def test_toggle_mute_while_recording_cancels_take() -> None:
     app = DictationApp()
     app.state = State.RECORDING
+    app.continuous = True
     mock_audio = MagicMock()
     app.audio = mock_audio
     app.icon = MagicMock()
+    app.hook = MagicMock()
 
     with patch("dictation.app.play_cue") as mock_cue:
         app._toggle_mute()
         assert app.muted is True
         mock_audio.cancel.assert_called_once()
         assert app.state == State.IDLE
+        assert app.continuous is False
+        app.hook.set_continuous.assert_called_with(False)
         mock_cue.assert_called_with("discard", enabled=app.cfg.sound_effects)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_hook_set_enabled_false_while_down_does_not_release() -> None:
     from dictation.hotkey import RightCtrlHook
-    on_press = MagicMock()
-    on_release = MagicMock()
+
+    on_event = MagicMock()
     on_cancel = MagicMock()
-    hook = RightCtrlHook(on_press, on_release, on_cancel)
+    hook = RightCtrlHook(on_event, on_cancel, hold_ms=60_000, double_tap_ms=60_100)
 
     with hook._down_lock:
         hook._down = True
 
     hook.set_enabled(False)
     assert hook.down is False
-    assert not on_release.called
+    assert not on_event.called
