@@ -112,6 +112,28 @@ def find_wasapi_input(preferred: int | None) -> int:
     return int(preferred)
 
 
+def list_wasapi_inputs() -> list[tuple[int, str]]:
+    """List available WASAPI input devices as (device_index, name)."""
+    try:
+        hostapis = sd.query_hostapis()
+        wasapi_index = next(
+            (i for i, api in enumerate(hostapis) if "WASAPI" in str(api.get("name", ""))),
+            None,
+        )
+        if wasapi_index is None:
+            return []
+        devices = sd.query_devices()
+        results: list[tuple[int, str]] = []
+        for idx, dev in enumerate(devices):
+            if int(dev.get("hostapi", -1)) == wasapi_index and int(dev.get("max_input_channels", 0)) > 0:
+                name = str(dev.get("name", f"Device {idx}"))
+                results.append((idx, name))
+        return results
+    except Exception:
+        LOG.exception("failed to query WASAPI devices")
+        return []
+
+
 class AudioCapture:
     def __init__(self, cfg: AppConfig) -> None:
         self.cfg = cfg
@@ -206,3 +228,18 @@ class AudioCapture:
     def cancel(self) -> None:
         """Discard the active mark without taking a slice."""
         self._mark = None
+
+    def switch_device(self, preferred: int | None) -> None:
+        """Switch input device and restart stream."""
+        new_device = find_wasapi_input(preferred)
+        if new_device == self.device and self._stream is not None:
+            return
+        self.stop()
+        self.device = new_device
+        info = sd.query_devices(self.device)
+        LOG.info(
+            "switched WASAPI input device to %s (%s)",
+            self.device,
+            info["name"],
+        )
+        self.start()

@@ -5,9 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Ensure Windows-only / GUI deps are mocked before dictation.app import
-sys.modules.setdefault("pystray", MagicMock())
+# Ensure Windows-only / GUI deps are mocked on non-Windows platforms
 if sys.platform != "win32":
+    sys.modules.setdefault("pystray", MagicMock())
     sys.modules.setdefault("dictation.hotkey", MagicMock())
     sys.modules.setdefault("dictation.paste", MagicMock())
 

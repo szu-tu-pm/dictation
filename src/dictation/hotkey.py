@@ -74,12 +74,29 @@ class RightCtrlHook:
         self._on_cancel = on_cancel
         self._down = False
         self._cancelling = False
+        self._enabled = True
         self._down_lock = threading.Lock()
         self._hook = None
         self._thread: threading.Thread | None = None
         self._thread_id = 0
         self._proc = HOOKPROC(self._ll_proc)
         self._ready = threading.Event()
+
+    @property
+    def enabled(self) -> bool:
+        with self._down_lock:
+            return self._enabled
+
+    def set_enabled(self, enabled: bool) -> None:
+        release = False
+        with self._down_lock:
+            self._enabled = enabled
+            if not enabled and self._down:
+                self._down = False
+                self._cancelling = False
+                release = True
+        if release:
+            self._on_release()
 
     @property
     def down(self) -> bool:
@@ -101,6 +118,10 @@ class RightCtrlHook:
     def _ll_proc(self, ncode: int, wparam: int, lparam: int) -> int:
         try:
             if ncode == HC_ACTION:
+                with self._down_lock:
+                    if not self._enabled:
+                        return int(user32.CallNextHookEx(self._hook, ncode, wparam, lparam) or 0)
+
                 data = ctypes.cast(lparam, POINTER(KBDLLHOOKSTRUCT)).contents
                 going_up = bool(data.flags & LLKHF_UP)
 
