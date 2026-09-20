@@ -18,7 +18,7 @@ from dictation.icons import tray_icon
 from dictation.logutil import LOG, setup_logging
 from dictation.paste import paste_text
 from dictation.paths import appdata_dir, config_path, history_path, log_path, vocabulary_path
-from dictation.sound import play_cue
+from dictation.sound import init_cues, play_cue
 from dictation.transcribe import WhisperEngine, load_wav_mono
 
 
@@ -227,6 +227,8 @@ class DictationApp:
 
     def _startup(self) -> None:
         try:
+            if self.cfg.sound_effects:
+                init_cues()
             self._set_state(State.DOWNLOADING, "Checking engine…")
             engine_dir = ensure_engine(self.cfg, self._on_progress)
             if self._stop.is_set():

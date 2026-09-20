@@ -9,7 +9,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dictation.config import AppConfig
-from dictation.sound import _get_cue_path, get_cue_wav, play_cue
+from dictation.sound import _get_cue_path, get_cue_wav, init_cues, play_cue
+
+
+def test_init_cues() -> None:
+    with patch("dictation.sound._get_cue_path") as mock_get_path:
+        init_cues()
+        assert mock_get_path.call_count == 4
+        cues_called = [call.args[0] for call in mock_get_path.call_args_list]
+        assert set(cues_called) == {"start", "stop", "paste", "discard"}
 
 
 def test_cue_wav_generation() -> None:

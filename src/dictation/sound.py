@@ -128,6 +128,12 @@ def _get_cue_path(name: CueName) -> Path | None:
     return _CUE_PATHS.get(name)
 
 
+def init_cues() -> None:
+    """Eagerly synthesize audio cues and write WAV cache files."""
+    for cname in ("start", "stop", "paste", "discard"):
+        _get_cue_path(cname)  # type: ignore[arg-type]
+
+
 def play_cue(name: CueName, *, enabled: bool = True) -> bool:
     """Play an earcon asynchronously. Returns True if playback was initiated."""
     if not enabled or winsound is None:
