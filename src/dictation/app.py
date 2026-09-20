@@ -15,6 +15,7 @@ from dictation.audio import AudioCapture, find_wasapi_input, list_wasapi_inputs,
 from dictation.config import load_config, save_config
 from dictation.history import load_history, record_dictation
 from dictation.hotkey import RightCtrlHook
+from dictation.hud import HudOverlay
 from dictation.icons import tray_icon
 from dictation.logutil import LOG, setup_logging
 from dictation.paste import copy_to_clipboard, paste_text
@@ -57,14 +58,34 @@ class DictationApp:
         self._record_started = 0.0
         self._level_ui_ts = 0.0
         self.continuous = False
+        self.hud = HudOverlay(enabled=self.cfg.hud_enabled)
+        self._transcribe_started = 0.0
 
     def _set_state(self, state: State, status: str, *, log: bool = True) -> None:
         with self._lock:
             self.state = state
             self.status = status
+            if state is State.TRANSCRIBING:
+                self._transcribe_started = time.monotonic()
             if log:
                 LOG.info("state=%s %s", state.value, status)
             self._refresh_icon(update_menu=False)
+            self._refresh_hud()
+
+    def _refresh_hud(self) -> None:
+        level = 0.0
+        continuous = self.continuous
+        elapsed = 0.0
+        if self.state is State.RECORDING and self.audio is not None:
+            level = self.audio.level
+        if self.state is State.TRANSCRIBING:
+            elapsed = max(0.0, time.monotonic() - self._transcribe_started)
+        self.hud.update(
+            self.state.value,
+            level=level,
+            continuous=continuous,
+            elapsed_s=elapsed,
+        )
 
     def _refresh_icon(self, *, update_menu: bool = False) -> None:
         if self.icon is None:
@@ -316,6 +337,7 @@ class DictationApp:
                             # Skip update_menu: rebuilding the tray menu at 10 Hz
                             # is expensive and dismisses an open context menu.
                             self._refresh_icon(update_menu=False)
+                            self._refresh_hud()
 
             try:
                 ev = self._ptt.get(timeout=0.05)
@@ -442,6 +464,7 @@ class DictationApp:
                         threading.Timer(2.0, self._recover_from_error, args=(gen,)).start()
                         continue
                     play_cue("paste", enabled=self.cfg.sound_effects)
+                    self.hud.show_success()
                 else:
                     LOG.info("nothing to paste")
                     play_cue("discard", enabled=self.cfg.sound_effects)
@@ -497,6 +520,7 @@ class DictationApp:
             self.icon.stop()
 
     def shutdown(self) -> None:
+        self.hud.stop()
         if self.hook is not None:
             self.hook.stop()
         if self.audio is not None:
@@ -508,6 +532,7 @@ class DictationApp:
     def run(self) -> None:
         self.audio = AudioCapture(self.cfg)
         self.audio.start()
+        self.hud.start()
         # Hook is created and started in _startup after the model is ready,
         # so Right Ctrl is not swallowed during download/warmup.
         self._coord_thread = threading.Thread(target=self._coordinator, name="ptt", daemon=True)

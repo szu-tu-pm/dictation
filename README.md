@@ -52,7 +52,7 @@ python -m dictation
 1. Focus Notepad, VS Code, Discord, Slack, or any window that accepts text.
 2. **Hold Right Ctrl** and speak naturally (or **double-tap** Right Ctrl / tray **Continuous Mode** for hands-free).
 3. **Release Right Ctrl** (or single-tap / toggle Continuous Mode off) — after a short transcription delay, text appears at the caret, with a trailing space so the next utterance continues the sentence.
-4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Recording (continuous)` / `Transcribing…` (or `Muted`). Right-click the tray icon to switch microphones live, toggle continuous mode, copy recent transcripts, mute dictation, toggle sound effects, or access configuration and logs.
+4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Recording (continuous)` / `Transcribing…` (or `Muted`). A floating pill at the bottom of the screen mirrors recording / transcribing / success. Right-click the tray icon to switch microphones live, toggle continuous mode, copy recent transcripts, mute dictation, toggle sound effects, or access configuration and logs.
 
 **Key behavior:**
 - Right Ctrl is **swallowed** while held so it never reaches other programs. Typing S or W while talking will not trigger Save or Close Tab.
@@ -100,6 +100,7 @@ Unicode `SendInput` is the primary path (typing characters directly at the caret
 | `continuous_max_seconds` | `120` | Auto-stop watchdog for hands-free continuous mode |
 | `hold_ms` | `250` | Hold threshold before Right Ctrl starts push-to-talk |
 | `double_tap_ms` | `350` | Window for double-tap → continuous mode |
+| `hud_enabled` | `true` | Show the floating bottom-center status pill |
 | `energy_threshold` | `0.008` | RMS energy floor to drop silent takes |
 | `model_filename` | `ggml-large-v3-turbo.bin` | ggml file under `models\` |
 | `sound_effects` | `true` | Subtle audio cues (earcons) on start, stop, paste, and discard |

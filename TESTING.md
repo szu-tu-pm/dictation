@@ -63,6 +63,7 @@ This suite runs quickly and does **not** download the 1.6 GB Whisper model. Test
 | `tests/test_hotkey.py` | `_is_right_ctrl` scancode and extended flag parsing, Left Ctrl isolation, `force_release` state transitions, typematic repeat handling, Escape cancel (including continuous) |
 | `tests/test_gestures.py` | Hold vs tap vs double-tap classification, continuous immediate stop, force_release, race-safe emit-under-lock |
 | `tests/test_continuous.py` | Coordinator continuous start/stop, tray toggle, watchdog, cancel clears continuous |
+| `tests/test_hud.py` | Floating pill layout, state mapping, success flash, render helpers |
 | `tests/test_paste.py` | Unicode `SendInput` primary path (no clipboard touches), emoji & surrogate pair support, newline normalization, reachable clipboard fallback |
 | `tests/test_app_state.py` | App lifecycle states (`STARTING` -> `IDLE` -> `RECORDING` -> `TRANSCRIBING`), error recovery generation counter, download progress throttling |
 | `tests/test_app_tray.py` | Tray Continuous Mode / mute / device / Recent Transcripts wiring |
@@ -114,8 +115,10 @@ Keep the app running. Copy this list and tick as you go.
 3. **Hold Right Ctrl**, say a clear sentence: *The quick brown fox jumps over the lazy dog.*
 4. **Release** Right Ctrl.
 5. Tray should go Recording (level % in the tooltip) → Transcribing → Idle (vulkan).
-6. **Pass:** the sentence (or a close transcript) appears at the caret.
-7. **Pass:** paste with Ctrl+V in another Notepad — you get `CLIPBOARD-BEFORE`, not the transcript (Unicode path leaves clipboard alone; clipboard fallback restores it).
+6. **Pass:** a floating pill appears bottom-center while recording (red), while transcribing (amber + elapsed), then flashes green briefly.
+7. **Pass:** Notepad keeps focus the whole time (pill never steals activation).
+8. **Pass:** the sentence (or a close transcript) appears at the caret.
+9. **Pass:** paste with Ctrl+V in another Notepad — you get `CLIPBOARD-BEFORE`, not the transcript (Unicode path leaves clipboard alone; clipboard fallback restores it).
 
 ### B. Accidental tap
 
