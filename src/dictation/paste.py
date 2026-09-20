@@ -68,6 +68,11 @@ kernel32.GlobalSize.restype = ctypes.c_size_t
 kernel32.GlobalFree.argtypes = [HANDLE]
 kernel32.GlobalFree.restype = HANDLE
 kernel32.GetCurrentThreadId.restype = DWORD
+kernel32.GetCurrentProcessId.restype = DWORD
+kernel32.OpenProcess.argtypes = [DWORD, BOOL, DWORD]
+kernel32.OpenProcess.restype = HANDLE
+kernel32.CloseHandle.argtypes = [HANDLE]
+kernel32.CloseHandle.restype = BOOL
 
 SKIP_FORMATS = {2, 3, 8, 9, 14}  # bitmaps / palette / metafiles
 
@@ -217,6 +222,64 @@ def _focused_hwnd() -> int:
             user32.AttachThreadInput(our, tid, False)
 
 
+def _token_elevated(token: HANDLE) -> bool | None:
+    """Return True/False for TokenElevation, or None if the query fails."""
+    TokenElevation = 20
+    class TOKEN_ELEVATION(ctypes.Structure):
+        _fields_ = [("TokenIsElevated", DWORD)]
+
+    elev = TOKEN_ELEVATION()
+    needed = DWORD(0)
+    advapi = windll.advapi32
+    advapi.GetTokenInformation.argtypes = [
+        HANDLE, ctypes.c_int, c_void_p, DWORD, POINTER(DWORD)
+    ]
+    advapi.GetTokenInformation.restype = BOOL
+    ok = advapi.GetTokenInformation(
+        token, TokenElevation, byref(elev), sizeof(elev), byref(needed)
+    )
+    if not ok:
+        return None
+    return bool(elev.TokenIsElevated)
+
+
+def _process_elevated(pid: int) -> bool | None:
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    TOKEN_QUERY = 0x0008
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        token = HANDLE()
+        advapi = windll.advapi32
+        advapi.OpenProcessToken.argtypes = [HANDLE, DWORD, POINTER(HANDLE)]
+        advapi.OpenProcessToken.restype = BOOL
+        if not advapi.OpenProcessToken(handle, TOKEN_QUERY, byref(token)):
+            return None
+        try:
+            return _token_elevated(token)
+        finally:
+            kernel32.CloseHandle(token)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _uipi_blocks_paste() -> bool:
+    """True when the focused window is elevated and we are not (SendInput is a no-op)."""
+    fg = user32.GetForegroundWindow()
+    if not fg:
+        return False
+    pid = DWORD(0)
+    user32.GetWindowThreadProcessId(fg, byref(pid))
+    if not pid.value:
+        return False
+    ours = _process_elevated(kernel32.GetCurrentProcessId())
+    theirs = _process_elevated(int(pid.value))
+    if ours is None or theirs is None:
+        return False
+    return (not ours) and theirs
+
+
 def _wm_paste(hwnd: int, timeout_ms: int = 200) -> bool:
     if not hwnd:
         return False
@@ -317,13 +380,23 @@ def _wait_paste_consumed(timeout: float = 0.25) -> None:
 
 
 def paste_text(text: str) -> None:
-    """Insert text via Unicode SendInput first; clipboard paste only as fallback."""
+    """Insert text via Unicode SendInput first; clipboard paste only as fallback.
+
+    Raises on hard failure (including UIPI-elevated targets where injection is a
+    silent no-op) so the app can surface Recent Transcripts recovery.
+    """
+    if _uipi_blocks_paste():
+        raise PermissionError(
+            "focused window is elevated; SendInput blocked by UIPI — use Recent Transcripts"
+        )
     try:
         sent = _send_unicode(text)
         if sent:
             LOG.info("pasted via Unicode SendInput (%s events)", sent)
             return
         LOG.warning("Unicode SendInput returned 0; falling back to clipboard")
+    except PermissionError:
+        raise
     except Exception:
         LOG.exception("Unicode SendInput failed; falling back to clipboard")
 

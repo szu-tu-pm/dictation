@@ -5,7 +5,9 @@ from collections.abc import Callable
 from ctypes import CFUNCTYPE, POINTER, byref, windll, wintypes
 import ctypes
 
+from dictation.gestures import GestureClassifier
 from dictation.logutil import LOG
+
 
 WH_KEYBOARD_LL = 13
 WM_QUIT = 0x0012
@@ -61,17 +63,22 @@ def _is_right_ctrl(data: KBDLLHOOKSTRUCT) -> bool:
 
 
 class RightCtrlHook:
-    """Low-level hook that swallows Right Ctrl and supports Escape cancellation."""
+    """Low-level hook: swallows Right Ctrl, classifies gestures, Escape cancel."""
 
     def __init__(
         self,
-        on_press: Callable[[], None],
-        on_release: Callable[[], None],
+        on_event: Callable[[str], None],
         on_cancel: Callable[[], bool] | None = None,
+        *,
+        hold_ms: int = 250,
+        double_tap_ms: int = 350,
     ) -> None:
-        self._on_press = on_press
-        self._on_release = on_release
         self._on_cancel = on_cancel
+        self._gestures = GestureClassifier(
+            on_event,
+            hold_ms=hold_ms,
+            double_tap_ms=double_tap_ms,
+        )
         self._down = False
         self._cancelling = False
         self._enabled = True
@@ -93,6 +100,12 @@ class RightCtrlHook:
             if not enabled:
                 self._down = False
                 self._cancelling = False
+        if not enabled:
+            self._gestures.reset()
+            self._gestures.set_continuous(False)
+
+    def set_continuous(self, value: bool) -> None:
+        self._gestures.set_continuous(value)
 
     @property
     def down(self) -> bool:
@@ -100,16 +113,10 @@ class RightCtrlHook:
             return self._down
 
     def force_release(self, reason: str) -> bool:
-        """Synthesize on_release if hook still thinks Right Ctrl is down."""
         with self._down_lock:
-            if not self._down:
-                return False
             self._down = False
             self._cancelling = False
-        # Normal releases can race the hook by a tick; keep this informational.
-        LOG.info("force_release Right Ctrl: %s", reason)
-        self._on_release()
-        return True
+        return self._gestures.force_release(reason)
 
     def _ll_proc(self, ncode: int, wparam: int, lparam: int) -> int:
         try:
@@ -121,19 +128,22 @@ class RightCtrlHook:
                 data = ctypes.cast(lparam, POINTER(KBDLLHOOKSTRUCT)).contents
                 going_up = bool(data.flags & LLKHF_UP)
 
-                # Cancel gesture: Escape while holding Right Ctrl during recording
+                # Cancel gesture: Escape while holding Right Ctrl, or while continuous.
                 if data.vkCode == VK_ESCAPE:
                     if not going_up:
                         cancel_fire = False
                         with self._down_lock:
                             if self._cancelling:
                                 return 1
-                            if self._down and self._on_cancel is not None:
+                            armed = self._down or self._gestures.continuous
+                            if armed and self._on_cancel is not None:
                                 cancel_fire = bool(self._on_cancel())
                                 if cancel_fire:
                                     self._down = False
                                     self._cancelling = True
                         if cancel_fire:
+                            self._gestures.reset()
+                            self._gestures.set_continuous(False)
                             LOG.info("Escape pressed while recording; cancelling take")
                             return 1
                     else:
@@ -150,7 +160,7 @@ class RightCtrlHook:
                                 self._down = False
                                 fire = True
                         if fire:
-                            self._on_release()
+                            self._gestures.on_up()
                     else:
                         fire = False
                         with self._down_lock:
@@ -158,7 +168,7 @@ class RightCtrlHook:
                                 self._down = True
                                 fire = True
                         if fire:
-                            self._on_press()
+                            self._gestures.on_down()
                     return 1
         except Exception:
             LOG.exception("keyboard hook callback failed")
@@ -194,3 +204,4 @@ class RightCtrlHook:
         if self._thread is not None:
             self._thread.join(timeout=2)
             self._thread = None
+        self._gestures.reset()
