@@ -14,6 +14,7 @@ LLKHF_EXTENDED = 0x01
 LLKHF_UP = 0x80
 VK_RCONTROL = 0xA3
 VK_CONTROL = 0x11
+VK_ESCAPE = 0x1B
 SCAN_CTRL = 0x1D
 
 LRESULT = ctypes.c_ssize_t
@@ -60,12 +61,19 @@ def _is_right_ctrl(data: KBDLLHOOKSTRUCT) -> bool:
 
 
 class RightCtrlHook:
-    """Low-level hook that swallows Right Ctrl and never Left Ctrl."""
+    """Low-level hook that swallows Right Ctrl and supports Escape cancellation."""
 
-    def __init__(self, on_press: Callable[[], None], on_release: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        on_press: Callable[[], None],
+        on_release: Callable[[], None],
+        on_cancel: Callable[[], bool] | None = None,
+    ) -> None:
         self._on_press = on_press
         self._on_release = on_release
+        self._on_cancel = on_cancel
         self._down = False
+        self._cancelling = False
         self._down_lock = threading.Lock()
         self._hook = None
         self._thread: threading.Thread | None = None
@@ -84,6 +92,7 @@ class RightCtrlHook:
             if not self._down:
                 return False
             self._down = False
+            self._cancelling = False
         # Normal releases can race the hook by a tick; keep this informational.
         LOG.info("force_release Right Ctrl: %s", reason)
         self._on_release()
@@ -93,8 +102,30 @@ class RightCtrlHook:
         try:
             if ncode == HC_ACTION:
                 data = ctypes.cast(lparam, POINTER(KBDLLHOOKSTRUCT)).contents
+                going_up = bool(data.flags & LLKHF_UP)
+
+                # Cancel gesture: Escape while holding Right Ctrl during recording
+                if data.vkCode == VK_ESCAPE:
+                    if not going_up:
+                        cancel_fire = False
+                        with self._down_lock:
+                            if self._cancelling:
+                                return 1
+                            if self._down and self._on_cancel is not None:
+                                cancel_fire = bool(self._on_cancel())
+                                if cancel_fire:
+                                    self._down = False
+                                    self._cancelling = True
+                        if cancel_fire:
+                            LOG.info("Escape pressed while recording; cancelling take")
+                            return 1
+                    else:
+                        with self._down_lock:
+                            if self._cancelling:
+                                self._cancelling = False
+                                return 1
+
                 if _is_right_ctrl(data):
-                    going_up = bool(data.flags & LLKHF_UP)
                     if going_up:
                         fire = False
                         with self._down_lock:

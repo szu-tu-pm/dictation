@@ -14,6 +14,7 @@ if sys.platform == "win32":
         LLKHF_UP,
         SCAN_CTRL,
         VK_CONTROL,
+        VK_ESCAPE,
         VK_RCONTROL,
         RightCtrlHook,
         _is_right_ctrl,
@@ -105,3 +106,97 @@ def test_hook_ll_proc_transitions() -> None:
     assert ret == 1
     assert hook.down is False
     assert on_release.call_count == 1
+
+
+def test_hook_escape_cancels_when_down() -> None:
+    on_press = MagicMock()
+    on_release = MagicMock()
+    on_cancel = MagicMock(return_value=True)
+    hook = RightCtrlHook(on_press, on_release, on_cancel)
+
+    # Press Right Ctrl
+    data_down = _make_kbd_struct(vk=VK_RCONTROL, flags=0)
+    hook._ll_proc(HC_ACTION, 0, ctypes.addressof(data_down))
+    assert hook.down is True
+
+    # Press Escape while down
+    esc_down = _make_kbd_struct(vk=VK_ESCAPE, flags=0)
+    ret = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret == 1
+    assert hook.down is False
+    assert on_cancel.call_count == 1
+
+    # Release Right Ctrl BEFORE Escape is released
+    data_up = _make_kbd_struct(vk=VK_RCONTROL, flags=LLKHF_UP)
+    ret = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(data_up))
+    assert ret == 1
+    assert on_release.call_count == 0
+
+    # Release Escape: should still be swallowed even though RCtrl released first
+    esc_up = _make_kbd_struct(vk=VK_ESCAPE, flags=LLKHF_UP)
+    ret = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_up))
+    assert ret == 1
+
+
+def test_hook_escape_auto_repeat_swallowed_while_cancelling() -> None:
+    on_press = MagicMock()
+    on_release = MagicMock()
+    on_cancel = MagicMock(return_value=True)
+    hook = RightCtrlHook(on_press, on_release, on_cancel)
+
+    # Press Right Ctrl
+    data_down = _make_kbd_struct(vk=VK_RCONTROL, flags=0)
+    hook._ll_proc(HC_ACTION, 0, ctypes.addressof(data_down))
+    assert hook.down is True
+
+    # First Escape down -> triggers cancel, swallowed
+    esc_down = _make_kbd_struct(vk=VK_ESCAPE, flags=0)
+    ret1 = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret1 == 1
+    assert on_cancel.call_count == 1
+    assert hook.down is False
+
+    # Auto-repeat Escape down while still held -> swallowed, on_cancel not called again
+    ret2 = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret2 == 1
+    assert on_cancel.call_count == 1
+
+    # Escape key up -> swallowed, clears cancelling state
+    esc_up = _make_kbd_struct(vk=VK_ESCAPE, flags=LLKHF_UP)
+    ret3 = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_up))
+    assert ret3 == 1
+
+    # Next Escape down (not held with RCtrl) -> passes through (ret == 0)
+    ret4 = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret4 == 0
+
+
+def test_hook_escape_not_swallowed_when_on_cancel_returns_false() -> None:
+    on_press = MagicMock()
+    on_release = MagicMock()
+    # When app is not recording, on_cancel returns False
+    on_cancel = MagicMock(return_value=False)
+    hook = RightCtrlHook(on_press, on_release, on_cancel)
+
+    data_down = _make_kbd_struct(vk=VK_RCONTROL, flags=0)
+    hook._ll_proc(HC_ACTION, 0, ctypes.addressof(data_down))
+    assert hook.down is True
+
+    # Escape should pass through to focused app
+    esc_down = _make_kbd_struct(vk=VK_ESCAPE, flags=0)
+    ret = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret == 0
+    assert hook.down is True
+    assert on_cancel.call_count == 1
+
+
+def test_hook_escape_passed_through_when_not_down() -> None:
+    on_press = MagicMock()
+    on_release = MagicMock()
+    on_cancel = MagicMock()
+    hook = RightCtrlHook(on_press, on_release, on_cancel)
+
+    esc_down = _make_kbd_struct(vk=VK_ESCAPE, flags=0)
+    ret = hook._ll_proc(HC_ACTION, 0, ctypes.addressof(esc_down))
+    assert ret == 0
+    assert on_cancel.call_count == 0

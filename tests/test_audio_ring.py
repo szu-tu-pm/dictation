@@ -1,6 +1,7 @@
 import numpy as np
 
-from dictation.audio import RingBuffer, peak_abs, rms
+from dictation.audio import AudioCapture, RingBuffer, peak_abs, rms
+from dictation.config import AppConfig
 from dictation.transcribe import too_quiet
 
 
@@ -89,3 +90,19 @@ def test_too_quiet_speech_like() -> None:
     rng = np.random.default_rng(0)
     samples = rng.normal(0, 0.1, 4000).astype(np.float32)
     assert not too_quiet(samples, threshold=0.008, min_samples=3200)
+
+
+def test_audio_capture_cancel(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "dictation.audio.sd.query_devices",
+        lambda *_a, **_k: {"name": "mic", "hostapi": 0},
+    )
+    monkeypatch.setattr(
+        "dictation.audio.sd.query_hostapis",
+        lambda: [{"name": "WASAPI", "default_input_device": 0}],
+    )
+    cap = AudioCapture(AppConfig())
+    cap.mark_start()
+    assert cap._mark is not None
+    cap.cancel()
+    assert cap._mark is None

@@ -128,6 +128,13 @@ class DictationApp:
     def _on_release(self) -> None:
         self._ptt.put("release")
 
+    def _on_cancel(self) -> bool:
+        with self._lock:
+            if self.state is State.RECORDING:
+                self._ptt.put("cancel")
+                return True
+            return False
+
     def _recover_from_error(self, gen: int) -> None:
         with self._lock:
             if self._error_gen != gen or self.state is not State.ERROR:
@@ -181,6 +188,16 @@ class DictationApp:
                     self._set_state(State.TRANSCRIBING, "Transcribing…")
                 play_cue("stop", enabled=self.cfg.sound_effects)
                 self._jobs.put("slice")
+            elif ev == "cancel":
+                was_recording = False
+                with self._lock:
+                    if self.state is State.RECORDING:
+                        was_recording = True
+                        if self.audio is not None:
+                            self.audio.cancel()
+                        self._set_state(State.IDLE, f"Idle ({self.backend})")
+                if was_recording:
+                    play_cue("discard", enabled=self.cfg.sound_effects)
 
     def _worker(self) -> None:
         while not self._stop.is_set():
@@ -243,7 +260,7 @@ class DictationApp:
             if self._stop.is_set():
                 return
             self.backend = self.engine.backend
-            self.hook = RightCtrlHook(self._on_press, self._on_release)
+            self.hook = RightCtrlHook(self._on_press, self._on_release, self._on_cancel)
             self.hook.start()
             self._set_state(State.IDLE, f"Idle ({self.backend})")
         except Exception as exc:
