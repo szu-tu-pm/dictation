@@ -36,6 +36,7 @@ class AppConfig:
     continuous_max_seconds: float = 120.0
     hold_ms: int = 250
     double_tap_ms: int = 350
+    hud_enabled: bool = True
     engine_url: str = ENGINE_ZIP_URL
     model_url: str = MODEL_URL
     model_filename: str = MODEL_FILENAME
