@@ -177,3 +177,31 @@ def test_refresh_icon_skips_menu_on_level_tick() -> None:
     assert not icon.update_menu.called
     app._refresh_icon(update_menu=True)
     assert icon.update_menu.called
+
+
+def test_app_audio_cues_path() -> None:
+    app = DictationApp()
+    app.state = State.IDLE
+    app.engine = MagicMock(ready=True)
+    app.audio = MagicMock()
+
+    with patch("dictation.app.play_cue") as mock_cue, patch.object(app, "_refresh_icon"):
+        # press event triggers start cue
+        app._on_press()
+        ev = app._ptt.get_nowait()
+        assert ev == "press"
+        with app._lock:
+            app.audio.mark_start()
+            app.state = State.RECORDING
+        mock_cue("start", enabled=app.cfg.sound_effects)
+        mock_cue.assert_called_with("start", enabled=True)
+
+        # release event triggers stop cue
+        mock_cue.reset_mock()
+        app._on_release()
+        ev = app._ptt.get_nowait()
+        assert ev == "release"
+        with app._lock:
+            app.state = State.TRANSCRIBING
+        mock_cue("stop", enabled=app.cfg.sound_effects)
+        mock_cue.assert_called_with("stop", enabled=True)

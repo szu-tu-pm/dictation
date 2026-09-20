@@ -173,13 +173,13 @@ class DictationApp:
                     self.audio.mark_start()
                     self._record_started = time.monotonic()
                     self._set_state(State.RECORDING, "Recording")
-                    play_cue("start", enabled=self.cfg.sound_effects)
+                play_cue("start", enabled=self.cfg.sound_effects)
             elif ev == "release":
                 with self._lock:
                     if self.state is not State.RECORDING or self.audio is None:
                         continue
                     self._set_state(State.TRANSCRIBING, "Transcribing…")
-                    play_cue("stop", enabled=self.cfg.sound_effects)
+                play_cue("stop", enabled=self.cfg.sound_effects)
                 self._jobs.put("slice")
 
     def _worker(self) -> None:

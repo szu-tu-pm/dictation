@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import io
 import math
+from pathlib import Path
 import struct
-import wave
+import threading
 from typing import Literal
+import wave
+
+from dictation.paths import tmp_dir
 
 try:
     import winsound
@@ -89,25 +93,68 @@ def _build_cues() -> dict[str, bytes]:
 
 
 _CUES: dict[str, bytes] | None = None
+_CUE_PATHS: dict[str, Path] | None = None
+_INIT_LOCK = threading.Lock()
 
 
 def get_cue_wav(name: CueName) -> bytes | None:
     global _CUES
     if _CUES is None:
-        _CUES = _build_cues()
+        with _INIT_LOCK:
+            if _CUES is None:
+                _CUES = _build_cues()
     return _CUES.get(name)
 
 
+def _get_cue_path(name: CueName) -> Path | None:
+    global _CUE_PATHS
+    if _CUE_PATHS is None:
+        with _INIT_LOCK:
+            if _CUE_PATHS is None:
+                cues_dir = tmp_dir() / "cues"
+                try:
+                    cues_dir.mkdir(parents=True, exist_ok=True)
+                    paths: dict[str, Path] = {}
+                    for cname in ("start", "stop", "paste", "discard"):
+                        wav_data = get_cue_wav(cname)  # type: ignore[arg-type]
+                        if wav_data:
+                            p = cues_dir / f"{cname}.wav"
+                            if not p.exists() or p.stat().st_size != len(wav_data):
+                                p.write_bytes(wav_data)
+                            paths[cname] = p
+                    _CUE_PATHS = paths
+                except Exception:
+                    _CUE_PATHS = {}
+    return _CUE_PATHS.get(name)
+
+
 def play_cue(name: CueName, *, enabled: bool = True) -> bool:
-    """Play an in-memory earcon asynchronously. Returns True if played."""
+    """Play an earcon asynchronously. Returns True if playback was initiated."""
     if not enabled or winsound is None:
         return False
+    # Preferred: native asynchronous playback from cached WAV file
+    try:
+        path = _get_cue_path(name)
+        if path is not None and path.exists():
+            flags = winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
+            winsound.PlaySound(str(path), flags)
+            return True
+    except Exception:
+        pass
+
+    # Fallback: play in-memory WAV on a daemon thread (CPython rejects SND_MEMORY | SND_ASYNC)
     data = get_cue_wav(name)
     if data is None:
         return False
     try:
-        flags = winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_NODEFAULT
-        winsound.PlaySound(data, flags)
+        def _play_worker() -> None:
+            try:
+                flags = winsound.SND_MEMORY | winsound.SND_NODEFAULT
+                winsound.PlaySound(data, flags)
+            except Exception:
+                pass
+
+        threading.Thread(target=_play_worker, daemon=True).start()
         return True
     except Exception:
         return False

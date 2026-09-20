@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
+import sys
 import wave
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from dictation.config import AppConfig
-from dictation.sound import get_cue_wav, play_cue
+from dictation.sound import _get_cue_path, get_cue_wav, play_cue
 
 
 def test_cue_wav_generation() -> None:
@@ -25,22 +27,45 @@ def test_cue_wav_generation() -> None:
             assert wf.getnframes() > 0
 
 
+def test_cue_path_caching(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    import dictation.sound as sound_mod
+
+    # Reset cache to test generation
+    sound_mod._CUE_PATHS = None
+    path = sound_mod._get_cue_path("start")
+    assert path is not None
+    assert path.exists()
+    assert path.name == "start.wav"
+    assert path.stat().st_size > 0
+
+
 def test_play_cue_disabled() -> None:
     with patch("dictation.sound.winsound") as mock_ws:
         assert play_cue("start", enabled=False) is False
         mock_ws.PlaySound.assert_not_called()
 
 
-def test_play_cue_enabled() -> None:
+def test_play_cue_file_async() -> None:
     with patch("dictation.sound.winsound") as mock_ws:
-        mock_ws.SND_MEMORY = 0x04
+        mock_ws.SND_FILENAME = 0x20000
         mock_ws.SND_ASYNC = 0x01
         mock_ws.SND_NODEFAULT = 0x02
         assert play_cue("paste", enabled=True) is True
         mock_ws.PlaySound.assert_called_once()
         args, _ = mock_ws.PlaySound.call_args
-        assert args[0].startswith(b"RIFF")
-        assert args[1] == (mock_ws.SND_MEMORY | mock_ws.SND_ASYNC | mock_ws.SND_NODEFAULT)
+        assert isinstance(args[0], str)
+        assert args[0].endswith("paste.wav")
+        assert args[1] == (mock_ws.SND_FILENAME | mock_ws.SND_ASYNC | mock_ws.SND_NODEFAULT)
+
+
+def test_play_cue_fallback_thread() -> None:
+    with patch("dictation.sound.winsound") as mock_ws, patch(
+        "dictation.sound._get_cue_path", return_value=None
+    ):
+        mock_ws.SND_MEMORY = 0x04
+        mock_ws.SND_NODEFAULT = 0x02
+        assert play_cue("start", enabled=True) is True
 
 
 def test_play_cue_no_winsound() -> None:
@@ -57,3 +82,9 @@ def test_play_cue_unknown_name() -> None:
 def test_config_sound_effects_default() -> None:
     cfg = AppConfig()
     assert cfg.sound_effects is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_play_cue_real_windows_does_not_raise() -> None:
+    # Verifies CPython doesn't raise RuntimeError: Cannot play asynchronously from memory
+    assert play_cue("start", enabled=True) is True
