@@ -116,7 +116,7 @@ Names and jargon live in `%APPDATA%\Dictation\vocabulary.json` (created on first
 }
 ```
 
-`words` and replacement targets are fed to Whisper as an `initial_prompt`. After transcription, `replacements` are applied as whole-word, case-insensitive substitutions. Successful pastes are appended to `%APPDATA%\Dictation\history.json` (last 200).
+`words` and replacement targets are fed to Whisper as an `initial_prompt`. After transcription, `replacements` are applied as whole-word, case-insensitive substitutions. Successful transcriptions are appended to `%APPDATA%\Dictation\history.json` (last 200) **before** paste, so a blocked paste still appears under **Recent Transcripts**.
 
 To time the engine without the hotkey or paste path:
 
