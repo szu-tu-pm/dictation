@@ -50,17 +50,19 @@ python -m dictation
 ## Usage
 
 1. Focus Notepad, VS Code, Discord, Slack, or any window that accepts text.
-2. **Hold Right Ctrl** and speak naturally.
-3. **Release Right Ctrl** — after a short transcription delay, text appears at the caret, with a trailing space so the next utterance continues the sentence.
-4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Transcribing…` (or `Muted`). Right-click the tray icon to switch microphones live, copy recent transcripts, mute dictation, toggle sound effects, or access configuration and logs.
+2. **Hold Right Ctrl** and speak naturally (or **double-tap** Right Ctrl / tray **Continuous Mode** for hands-free).
+3. **Release Right Ctrl** (or single-tap / toggle Continuous Mode off) — after a short transcription delay, text appears at the caret, with a trailing space so the next utterance continues the sentence.
+4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Recording (continuous)` / `Transcribing…` (or `Muted`). Right-click the tray icon to switch microphones live, toggle continuous mode, copy recent transcripts, mute dictation, toggle sound effects, or access configuration and logs.
 
 **Key behavior:**
 - Right Ctrl is **swallowed** while held so it never reaches other programs. Typing S or W while talking will not trigger Save or Close Tab.
 - **Left Ctrl is untouched** — `Left Ctrl + S` still saves normally.
-- **Cancel take:** Press **Escape** while holding Right Ctrl to abort recording immediately without transcribing or pasting anything. (Escape cancels during active recording while holding the key, not once the key has been released and transcription is in-flight).
+- **Cancel take:** Press **Escape** while recording (holding Right Ctrl, or during continuous mode) to abort immediately without transcribing or pasting.
 - **Mute Dictation:** Temporarily disables hotkey recording for the current session (session-only; not persisted across app restarts).
 - **Recent Transcripts:** Clicking an entry in the Recent Transcripts submenu copies the text directly to your clipboard (overwriting current clipboard contents).
 - Accidental taps shorter than ~200 ms, or near-silent audio takes, are automatically ignored.
+- Continuous mode auto-stops after `continuous_max_seconds` (default 120).
+- If paste is blocked (elevated window / UIPI), tray shows `Paste failed — use Recent Transcripts` and the take is still saved under Recent Transcripts.
 
 ---
 
@@ -92,9 +94,12 @@ Unicode `SendInput` is the primary path (typing characters directly at the caret
 | --- | --- | --- |
 | `language` | `en` | Whisper language code (`en`, `de`, `fr`, `es`, etc.) |
 | `device` | `null` | WASAPI input index, or default microphone |
-| `preroll_ms` | `200` | Audio kept from before key-down (prevents first syllable clip) |
+| `preroll_ms` | `350` | Audio kept from before key-down (covers hold classification delay) |
 | `suffix_ms` | `80` | Extra audio captured after key-up |
 | `max_record_seconds` | `60` | Auto-release watchdog if key hold exceeds this duration |
+| `continuous_max_seconds` | `120` | Auto-stop watchdog for hands-free continuous mode |
+| `hold_ms` | `250` | Hold threshold before Right Ctrl starts push-to-talk |
+| `double_tap_ms` | `350` | Window for double-tap → continuous mode |
 | `energy_threshold` | `0.008` | RMS energy floor to drop silent takes |
 | `model_filename` | `ggml-large-v3-turbo.bin` | ggml file under `models\` |
 | `sound_effects` | `true` | Subtle audio cues (earcons) on start, stop, paste, and discard |

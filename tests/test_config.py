@@ -27,6 +27,10 @@ def test_load_creates_defaults(tmp_path, monkeypatch) -> None:
     loaded = load_config()
     assert loaded.model == "large-v3-turbo"
     assert loaded.max_record_seconds == 60.0
+    assert loaded.continuous_max_seconds == 120.0
+    assert loaded.hold_ms == 250
+    assert loaded.double_tap_ms == 350
+    assert loaded.preroll_ms == 350
     assert config_path().is_file()
 
 
