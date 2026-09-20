@@ -249,3 +249,16 @@ def test_app_audio_cues_path() -> None:
             app._stop.set()
             coord_thread.join(timeout=1.0)
             worker_thread.join(timeout=1.0)
+
+
+def test_app_on_cancel_queues_cancel() -> None:
+    app = DictationApp()
+    # When in RECORDING, returns True and queues cancel
+    app.state = State.RECORDING
+    assert app._on_cancel() is True
+    assert app._ptt.get_nowait() == "cancel"
+
+    # When not in RECORDING, returns False and does not queue cancel
+    app.state = State.IDLE
+    assert app._on_cancel() is False
+    assert app._ptt.empty()

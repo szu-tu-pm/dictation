@@ -57,6 +57,7 @@ python -m dictation
 **Key behavior:**
 - Right Ctrl is **swallowed** while held so it never reaches other programs. Typing S or W while talking will not trigger Save or Close Tab.
 - **Left Ctrl is untouched** — `Left Ctrl + S` still saves normally.
+- **Cancel take:** Press **Escape** while holding Right Ctrl to abort recording immediately without transcribing or pasting anything.
 - Accidental taps shorter than ~200 ms, or near-silent audio takes, are automatically ignored.
 
 ---
