@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from enum import Enum
+import os
 from pathlib import Path
 import queue
 import threading
@@ -10,15 +11,17 @@ import time
 import pystray
 
 from dictation.assets import ensure_engine, ensure_model
-from dictation.audio import AudioCapture, find_wasapi_input, peak_abs, rms
-from dictation.config import load_config
+from dictation.audio import AudioCapture, find_wasapi_input, list_wasapi_inputs, peak_abs, rms
+from dictation.config import load_config, save_config
 from dictation.history import load_history, record_dictation
 from dictation.hotkey import RightCtrlHook
 from dictation.icons import tray_icon
 from dictation.logutil import LOG, setup_logging
 from dictation.paste import copy_to_clipboard, paste_text
 from dictation.paths import appdata_dir, config_path, history_path, log_path, vocabulary_path
+from dictation.sound import init_cues, play_cue
 from dictation.transcribe import WhisperEngine, load_wav_mono
+from dictation.vocabulary import load_vocabulary
 
 
 class State(Enum):
@@ -37,6 +40,7 @@ class DictationApp:
         self.state = State.STARTING
         self.status = "Starting…"
         self.backend = "unknown"
+        self.muted = False
         self._lock = threading.RLock()
         self._ptt: queue.Queue[str] = queue.Queue()
         self._jobs: queue.Queue[object] = queue.Queue()
@@ -59,28 +63,32 @@ class DictationApp:
             self.status = status
             if log:
                 LOG.info("state=%s %s", state.value, status)
-            self._refresh_icon(update_menu=True)
+            self._refresh_icon(update_menu=False)
 
-    def _refresh_icon(self, *, update_menu: bool = True) -> None:
+    def _refresh_icon(self, *, update_menu: bool = False) -> None:
         if self.icon is None:
             return
-        visual = {
-            State.STARTING: "loading",
-            State.DOWNLOADING: "downloading",
-            State.LOADING: "loading",
-            State.IDLE: "idle",
-            State.RECORDING: "recording",
-            State.TRANSCRIBING: "transcribing",
-            State.ERROR: "error",
-        }[self.state]
-        level = 0.0
-        if self.state is State.RECORDING and self.audio is not None:
-            level = self.audio.level
-        self.icon.icon = tray_icon(visual, level=level)
-        if self.state is State.RECORDING:
-            self.icon.title = f"Dictation — Recording {int(level * 100)}%"
+        if self.muted:
+            self.icon.icon = tray_icon("muted")
+            self.icon.title = "Dictation — Muted"
         else:
-            self.icon.title = f"Dictation — {self.status}"
+            visual = {
+                State.STARTING: "loading",
+                State.DOWNLOADING: "downloading",
+                State.LOADING: "loading",
+                State.IDLE: "idle",
+                State.RECORDING: "recording",
+                State.TRANSCRIBING: "transcribing",
+                State.ERROR: "error",
+            }[self.state]
+            level = 0.0
+            if self.state is State.RECORDING and self.audio is not None:
+                level = self.audio.level
+            self.icon.icon = tray_icon(visual, level=level)
+            if self.state is State.RECORDING:
+                self.icon.title = f"Dictation — Recording {int(level * 100)}%"
+            else:
+                self.icon.title = f"Dictation — {self.status}"
         if not update_menu:
             return
         try:
@@ -88,12 +96,52 @@ class DictationApp:
         except Exception:
             pass
 
+    def _set_device(self, dev_idx: int | None) -> None:
+        with self._lock:
+            if self.state is State.RECORDING:
+                if self.audio is not None:
+                    self.audio.cancel()
+                self._set_state(State.IDLE, f"Idle ({self.backend})")
+                play_cue("discard", enabled=self.cfg.sound_effects)
+            if self.audio is not None:
+                self.audio.switch_device(dev_idx)
+            self.cfg.device = dev_idx
+            save_config(self.cfg)
+        self._refresh_icon(update_menu=True)
+
+    def _device_menu_items(self) -> list[pystray.MenuItem]:
+        items: list[pystray.MenuItem] = [
+            pystray.MenuItem(
+                "Default Microphone",
+                lambda _: self._set_device(None),
+                checked=lambda _: self.cfg.device is None,
+                radio=True,
+            )
+        ]
+        for idx, name in list_wasapi_inputs():
+            items.append(
+                pystray.MenuItem(
+                    name.replace("&", "&&"),
+                    (lambda i: lambda _: self._set_device(i))(idx),
+                    checked=(lambda i: lambda _: self.cfg.device == i)(idx),
+                    radio=True,
+                )
+            )
+        return items
+
     def _history_menu_items(self) -> list[pystray.MenuItem]:
         history = load_history()
         if not history:
             return [pystray.MenuItem("(No recent transcripts)", None, enabled=False)]
         items: list[pystray.MenuItem] = []
+<<<<<<< COMPLICATED: recent-transcripts count (PR #9 vs #7)
+# PR #9 (cursor/recent-transcripts-a531): show 8 recent transcripts
+# PR #7 / base (cursor/windows-local-dictation): show 5 recent transcripts
+# Design disagreement — do not guess; human must pick one limit.
         for item in history[:8]:
+=======
+        for item in history[:5]:
+>>>>>>> COMPLICATED: recent-transcripts count (PR #9 vs #7)
             full_text = item.get("text", "")
             display = (full_text[:45] + "…") if len(full_text) > 45 else full_text
             items.append(
@@ -104,9 +152,55 @@ class DictationApp:
             )
         return items
 
+    def _toggle_mute(self, icon=None, item=None) -> None:  # noqa: ANN001
+        self.muted = not self.muted
+        if self.hook is not None:
+            self.hook.set_enabled(not self.muted)
+        with self._lock:
+            if self.muted and self.state is State.RECORDING:
+                if self.audio is not None:
+                    self.audio.cancel()
+                self._set_state(State.IDLE, f"Idle ({self.backend})")
+                play_cue("discard", enabled=self.cfg.sound_effects)
+        self._refresh_icon(update_menu=True)
+
+    def _toggle_sound(self, icon=None, item=None) -> None:  # noqa: ANN001
+        self.cfg.sound_effects = not self.cfg.sound_effects
+        save_config(self.cfg)
+        self._refresh_icon(update_menu=True)
+
+    def _open_folder(self) -> None:
+        if hasattr(os, "startfile"):
+            os.startfile(appdata_dir())
+
+    def _open_vocabulary(self) -> None:
+        load_vocabulary()
+        if hasattr(os, "startfile"):
+            os.startfile(vocabulary_path())
+
+    def _open_log(self) -> None:
+        path = log_path()
+        if not path.exists():
+            path.write_text("", encoding="utf-8")
+        if hasattr(os, "startfile"):
+            os.startfile(path)
+
     def _menu(self) -> pystray.Menu:
         return pystray.Menu(
-            pystray.MenuItem(lambda _: self.status, None, enabled=False),
+            pystray.MenuItem(lambda _: self.status if not self.muted else "Muted", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Microphone", pystray.Menu(self._device_menu_items)),
+            pystray.MenuItem("Recent Transcripts", pystray.Menu(self._history_menu_items)),
+            pystray.MenuItem("Mute Dictation", self._toggle_mute, checked=lambda _: self.muted),
+            pystray.MenuItem(
+                "Sound Effects",
+                self._toggle_sound,
+                checked=lambda _: self.cfg.sound_effects,
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Open Config Folder", lambda _: self._open_folder()),
+            pystray.MenuItem("Edit Vocabulary", lambda _: self._open_vocabulary()),
+            pystray.MenuItem("View Log", lambda _: self._open_log()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Recent Transcripts", pystray.Menu(self._history_menu_items)),
             pystray.Menu.SEPARATOR,
@@ -144,6 +238,13 @@ class DictationApp:
 
     def _on_release(self) -> None:
         self._ptt.put("release")
+
+    def _on_cancel(self) -> bool:
+        with self._lock:
+            if self.state is State.RECORDING:
+                self._ptt.put("cancel")
+                return True
+            return False
 
     def _recover_from_error(self, gen: int) -> None:
         with self._lock:
@@ -190,12 +291,24 @@ class DictationApp:
                     self.audio.mark_start()
                     self._record_started = time.monotonic()
                     self._set_state(State.RECORDING, "Recording")
+                play_cue("start", enabled=self.cfg.sound_effects)
             elif ev == "release":
                 with self._lock:
                     if self.state is not State.RECORDING or self.audio is None:
                         continue
                     self._set_state(State.TRANSCRIBING, "Transcribing…")
+                play_cue("stop", enabled=self.cfg.sound_effects)
                 self._jobs.put("slice")
+            elif ev == "cancel":
+                was_recording = False
+                with self._lock:
+                    if self.state is State.RECORDING:
+                        was_recording = True
+                        if self.audio is not None:
+                            self.audio.cancel()
+                        self._set_state(State.IDLE, f"Idle ({self.backend})")
+                if was_recording:
+                    play_cue("discard", enabled=self.cfg.sound_effects)
 
     def _worker(self) -> None:
         while not self._stop.is_set():
@@ -229,6 +342,7 @@ class DictationApp:
                         paste_text(to_paste)
                     except Exception:
                         LOG.exception("paste failed")
+                        play_cue("discard", enabled=self.cfg.sound_effects)
                         with self._lock:
                             self._error_gen += 1
                             gen = self._error_gen
@@ -238,10 +352,13 @@ class DictationApp:
                             )
                         threading.Timer(2.0, self._recover_from_error, args=(gen,)).start()
                         continue
+                    play_cue("paste", enabled=self.cfg.sound_effects)
                 else:
                     LOG.info("nothing to paste")
+                    play_cue("discard", enabled=self.cfg.sound_effects)
             except Exception:
-                LOG.exception("transcribe failed")
+                LOG.exception("transcribe/paste failed")
+                play_cue("discard", enabled=self.cfg.sound_effects)
                 with self._lock:
                     self._error_gen += 1
                     gen = self._error_gen
@@ -253,6 +370,8 @@ class DictationApp:
 
     def _startup(self) -> None:
         try:
+            if self.cfg.sound_effects:
+                init_cues()
             self._set_state(State.DOWNLOADING, "Checking engine…")
             engine_dir = ensure_engine(self.cfg, self._on_progress)
             if self._stop.is_set():
@@ -267,7 +386,8 @@ class DictationApp:
             if self._stop.is_set():
                 return
             self.backend = self.engine.backend
-            self.hook = RightCtrlHook(self._on_press, self._on_release)
+            self.hook = RightCtrlHook(self._on_press, self._on_release, self._on_cancel)
+            self.hook.set_enabled(not self.muted)
             self.hook.start()
             self._set_state(State.IDLE, f"Idle ({self.backend})")
         except Exception as exc:

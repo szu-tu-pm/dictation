@@ -348,7 +348,7 @@ def paste_text(text: str) -> None:
 
 
 def copy_to_clipboard(text: str) -> bool:
-    """Set text onto the Windows clipboard, replacing current clipboard content."""
+    """Set text directly onto the Windows clipboard, replacing current clipboard content."""
     try:
         _set_text(text)
         LOG.info("copied %s chars to clipboard", len(text))
