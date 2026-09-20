@@ -94,7 +94,7 @@ def _build_cues() -> dict[str, bytes]:
 
 _CUES: dict[str, bytes] | None = None
 _CUE_PATHS: dict[str, Path] | None = None
-_INIT_LOCK = threading.Lock()
+_INIT_LOCK = threading.RLock()
 
 
 def get_cue_wav(name: CueName) -> bytes | None:
