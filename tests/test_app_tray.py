@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+# Ensure Windows-only / GUI deps are mocked on non-Windows platforms
+if sys.platform != "win32":
+    sys.modules.setdefault("pystray", MagicMock())
+    sys.modules.setdefault("dictation.hotkey", MagicMock())
+    sys.modules.setdefault("dictation.paste", MagicMock())
+
+from dictation.app import DictationApp, State
+from dictation.config import AppConfig
+
+
+def test_tray_menu_structure() -> None:
+    app = DictationApp()
+    menu = app._menu()
+    assert menu is not None
+    # Verify submenu items exist
+    dev_items = app._device_menu_items()
+    assert len(dev_items) >= 1
+    assert dev_items[0].text == "Default Microphone"
+
+    hist_items = app._history_menu_items()
+    assert len(hist_items) >= 1
+
+
+def test_device_menu_selection(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    app = DictationApp()
+    mock_audio = MagicMock()
+    app.audio = mock_audio
+
+    with patch("dictation.app.list_wasapi_inputs", return_value=[(1, "USB Mic"), (2, "Headset")]):
+        items = app._device_menu_items()
+        assert len(items) == 3
+        assert items[0].text == "Default Microphone"
+        assert items[1].text == "USB Mic"
+        assert items[2].text == "Headset"
+
+        # Click second device
+        items[1]._action(None)
+        assert app.cfg.device == 1
+        mock_audio.switch_device.assert_called_with(1)
+
+        # Click default mic
+        items[0]._action(None)
+        assert app.cfg.device is None
+        mock_audio.switch_device.assert_called_with(None)
+
+
+def test_history_menu_items_empty() -> None:
+    app = DictationApp()
+    with patch("dictation.app.load_history", return_value=[]):
+        items = app._history_menu_items()
+        assert len(items) == 1
+        assert items[0].text == "(No recent transcripts)"
+        assert not items[0].enabled
+
+
+def test_history_menu_items_copy() -> None:
+    app = DictationApp()
+    mock_history = [
+        {"date": "2026-09-20T10:00:00", "text": "Testing dictation tray copy"},
+        {"date": "2026-09-20T10:01:00", "text": "Short"},
+    ]
+    with patch("dictation.app.load_history", return_value=mock_history), patch(
+        "dictation.app.copy_to_clipboard"
+    ) as mock_copy:
+        items = app._history_menu_items()
+        assert len(items) == 2
+        assert items[0].text == "Testing dictation tray copy"
+        # Trigger click
+        items[0]._action(None)
+        mock_copy.assert_called_once_with("Testing dictation tray copy")
+
+
+def test_toggle_mute() -> None:
+    app = DictationApp()
+    app.hook = MagicMock()
+    app.icon = MagicMock()
+    assert app.muted is False
+
+    # Mute
+    app._toggle_mute()
+    assert app.muted is True
+    app.hook.set_enabled.assert_called_with(False)
+    assert app.icon.title == "Dictation — Muted"
+
+    # Unmute
+    app._toggle_mute()
+    assert app.muted is False
+    app.hook.set_enabled.assert_called_with(True)
+
+
+def test_quick_links(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    app = DictationApp()
+
+    with patch("os.startfile", create=True) as mock_startfile:
+        app._open_folder()
+        assert mock_startfile.called
+
+    with patch("os.startfile", create=True) as mock_startfile:
+        app._open_vocabulary()
+        assert mock_startfile.called
+
+    with patch("os.startfile", create=True) as mock_startfile:
+        app._open_log()
+        assert mock_startfile.called
+
+
+def test_device_switch_failure_does_not_save_config(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    app = DictationApp()
+    app.cfg.device = None
+    mock_audio = MagicMock()
+    mock_audio.switch_device.side_effect = RuntimeError("Device unavailable")
+    app.audio = mock_audio
+
+    with patch("dictation.app.save_config") as mock_save:
+        with pytest.raises(RuntimeError, match="Device unavailable"):
+            app._set_device(99)
+        assert not mock_save.called
+    assert app.cfg.device is None
+
+
+def test_device_menu_escapes_ampersand() -> None:
+    app = DictationApp()
+    with patch("dictation.app.list_wasapi_inputs", return_value=[(1, "Microphone (Realtek & USB)")]):
+        items = app._device_menu_items()
+        assert items[1].text == "Microphone (Realtek && USB)"
+
+
+def test_toggle_sound(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    app = DictationApp()
+    app.cfg.sound_effects = True
+    with patch("dictation.app.save_config") as mock_save:
+        app._toggle_sound()
+        assert app.cfg.sound_effects is False
+        assert mock_save.called
+
+        mock_save.reset_mock()
+        app._toggle_sound()
+        assert app.cfg.sound_effects is True
+        assert mock_save.called
+
+
+def test_audio_capture_switch_device_clears_ring_and_cancels() -> None:
+    import numpy as np
+    from dictation.audio import AudioCapture
+    from dictation.config import AppConfig
+
+    cfg = AppConfig()
+    audio = AudioCapture(cfg)
+    audio.ring.write(np.ones(1000, dtype=np.float32))
+    audio.mark_start()
+    assert audio.ring.write_total == 1000
+    assert audio._mark is not None
+
+    with (
+        patch("dictation.audio.find_wasapi_input", return_value=1),
+        patch("dictation.audio.sd.query_devices", return_value={"name": "New Mic"}),
+        patch.object(audio, "start"),
+        patch.object(audio, "stop"),
+    ):
+        audio.switch_device(1)
+        assert audio.ring.write_total == 0
+        assert audio._mark is None
+        assert audio.device == 1
+
+
+def test_device_switch_while_recording_cancels_take() -> None:
+    app = DictationApp()
+    app.state = State.RECORDING
+    mock_audio = MagicMock()
+    app.audio = mock_audio
+
+    with patch("dictation.app.play_cue") as mock_cue, patch("dictation.app.save_config"):
+        app._set_device(2)
+        mock_audio.cancel.assert_called_once()
+        assert app.state == State.IDLE
+        mock_cue.assert_called_with("discard", enabled=app.cfg.sound_effects)
+        mock_audio.switch_device.assert_called_with(2)
+
+
+def test_toggle_mute_while_recording_cancels_take() -> None:
+    app = DictationApp()
+    app.state = State.RECORDING
+    mock_audio = MagicMock()
+    app.audio = mock_audio
+    app.icon = MagicMock()
+
+    with patch("dictation.app.play_cue") as mock_cue:
+        app._toggle_mute()
+        assert app.muted is True
+        mock_audio.cancel.assert_called_once()
+        assert app.state == State.IDLE
+        mock_cue.assert_called_with("discard", enabled=app.cfg.sound_effects)
+
+
+def test_hook_set_enabled_false_while_down_does_not_release() -> None:
+    from dictation.hotkey import RightCtrlHook
+    on_press = MagicMock()
+    on_release = MagicMock()
+    on_cancel = MagicMock()
+    hook = RightCtrlHook(on_press, on_release, on_cancel)
+
+    with hook._down_lock:
+        hook._down = True
+
+    hook.set_enabled(False)
+    assert hook.down is False
+    assert not on_release.called
