@@ -209,12 +209,20 @@ class AudioCapture:
                 LOG.exception("error stopping audio stream")
             self._stream = None
 
-    def mark_start(self) -> None:
+    def mark_start(self, *, max_seconds: float | None = None) -> None:
+        # Grow for the active mode's watchdog so continuous takes are not truncated.
+        limit = (
+            float(max_seconds)
+            if max_seconds is not None
+            else max(self.cfg.max_record_seconds, getattr(self.cfg, "continuous_max_seconds", 0.0))
+        )
         self.ring.grow_to(
-            max(self.cfg.ring_seconds, self.cfg.max_record_seconds + 2),
+            max(self.cfg.ring_seconds, limit + 2),
             self.cfg.sample_rate,
         )
-        preroll = int(self.cfg.sample_rate * self.cfg.preroll_ms / 1000)
+        # Effective preroll covers hold classification delay when configured low.
+        preroll_ms = max(int(self.cfg.preroll_ms), int(getattr(self.cfg, "hold_ms", 0)) + 50)
+        preroll = int(self.cfg.sample_rate * preroll_ms / 1000)
         self._mark = max(0, self.ring.write_total - preroll)
 
     def take_slice(self) -> np.ndarray:

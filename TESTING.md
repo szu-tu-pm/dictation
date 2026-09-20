@@ -57,12 +57,15 @@ This suite runs quickly and does **not** download the 1.6 GB Whisper model. Test
 | `tests/test_vocabulary.py` | Word list, whole-word replacements, Whisper prompt truncation, JSON roundtrip |
 | `tests/test_history.py` | Dictation history prepend, blank skip, 200-item cap |
 | `tests/test_text.py` | Filler stripping (`um`, `uh`), ghost transcript filtering (`thanks for watching`), punctuation formatting |
-| `tests/test_audio_ring.py` | Circular buffer wrap, sequence preservation, dynamic growth (`grow_to`), truncation counter, RMS & quiet gating |
-| `tests/test_config.py` | Config roundtrip save/load, default values, recovery from corrupted JSON and non-dict content |
+| `tests/test_audio_ring.py` | Circular buffer wrap, sequence preservation, dynamic growth (`grow_to`), `mark_start(max_seconds=120)` continuous ring growth, truncation counter, RMS & quiet gating |
+| `tests/test_config.py` | Config roundtrip save/load, default values (`preroll_ms` 350, continuous/hold/double-tap), recovery from corrupted JSON and non-dict content |
 | `tests/test_paths.py` | Environment variable overrides (`APPDATA`), automatic creation of engine, models, and tmp directories |
-| `tests/test_hotkey.py` | `_is_right_ctrl` scancode and extended flag parsing, Left Ctrl isolation, `force_release` state transitions, typematic repeat handling |
+| `tests/test_hotkey.py` | `_is_right_ctrl` scancode and extended flag parsing, Left Ctrl isolation, `force_release` state transitions, typematic repeat handling, Escape cancel (including continuous) |
+| `tests/test_gestures.py` | Hold vs tap vs double-tap classification, continuous immediate stop, force_release, race-safe emit-under-lock |
+| `tests/test_continuous.py` | Coordinator continuous start/stop, tray toggle, watchdog, cancel clears continuous |
 | `tests/test_paste.py` | Unicode `SendInput` primary path (no clipboard touches), emoji & surrogate pair support, newline normalization, reachable clipboard fallback |
 | `tests/test_app_state.py` | App lifecycle states (`STARTING` -> `IDLE` -> `RECORDING` -> `TRANSCRIBING`), error recovery generation counter, download progress throttling |
+| `tests/test_app_tray.py` | Tray Continuous Mode / mute / device / Recent Transcripts wiring |
 | `tests/test_logutil.py` | Logging setup idempotency, formatting, and file handler initialization |
 | `tests/test_assets_zip.py` | Zip extraction safety, path traversal (Zip-Slip) rejection, engine readiness detection |
 | `tests/test_icons.py` | Tray icon generation across all 6 states (`idle`, `recording`, `transcribing`, etc.) |
@@ -161,11 +164,22 @@ Keep the app running. Copy this list and tick as you go.
 2. Immediately hold Right Ctrl again while the tray still says Transcribing.
 3. **Pass:** the second press is ignored until Idle; you do not get overlapped garbage.
 
+### H2. Continuous / toggle-to-talk
+
+1. Focus Notepad. **Double-tap** Right Ctrl quickly.
+2. **Pass:** tray shows `Recording (continuous)`; you can release the key and keep speaking.
+3. Speak a short phrase, then **single-tap** Right Ctrl (stop is immediate on key-down).
+4. **Pass:** tray goes Transcribing → Idle and the phrase pastes.
+5. Tray → **Continuous Mode** on, speak, toggle Continuous Mode off.
+6. **Pass:** same stop-and-transcribe behavior as the single tap.
+7. Start continuous again, press **Escape**.
+8. **Pass:** recording discards with no paste; Continuous Mode is cleared.
+
 ### I. Elevated window (optional)
 
 1. Open Notepad **as Administrator**.
 2. From a normal (non-admin) dictation process, try to dictate into it.
-3. **Pass:** paste fails or does nothing. This is expected UIPI. Dictate into a normal window instead, or run dictation elevated if you truly need admin targets.
+3. **Pass:** paste fails or does nothing. This is expected UIPI. Tray may show `Paste failed — use Recent Transcripts`. Dictate into a normal window instead, or run dictation elevated if you truly need admin targets.
 
 ### J. Quit
 

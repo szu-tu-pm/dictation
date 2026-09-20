@@ -115,3 +115,12 @@ def test_copy_to_clipboard_success() -> None:
 def test_copy_to_clipboard_failure() -> None:
     with patch("dictation.paste._set_text", side_effect=RuntimeError("Clipboard locked")):
         assert copy_to_clipboard("test copy") is False
+
+def test_paste_text_raises_when_uipi_blocks() -> None:
+    with (
+        patch("dictation.paste._uipi_blocks_paste", return_value=True),
+        patch("dictation.paste._send_unicode") as mock_unicode,
+        pytest.raises(PermissionError, match="elevated"),
+    ):
+        paste_text("hello")
+    assert not mock_unicode.called

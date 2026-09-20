@@ -204,7 +204,7 @@ def test_app_audio_cues_path() -> None:
 
         try:
             # 1. Press -> coordinator handles "press" -> plays "start" cue
-            app._on_press()
+            app._on_hotkey_event("press")
             for _ in range(50):
                 if app.state == State.RECORDING:
                     break
@@ -214,7 +214,7 @@ def test_app_audio_cues_path() -> None:
 
             # 2. Release -> coordinator plays "stop" cue; worker plays "paste" cue on success
             mock_cue.reset_mock()
-            app._on_release()
+            app._on_hotkey_event("release")
             for _ in range(50):
                 if app.state == State.IDLE:
                     break
@@ -227,7 +227,7 @@ def test_app_audio_cues_path() -> None:
             # 3. Discard cue when transcript is empty
             app.engine.transcribe.return_value = ""
             mock_cue.reset_mock()
-            app._on_press()
+            app._on_hotkey_event("press")
             for _ in range(50):
                 if app.state == State.RECORDING:
                     break
@@ -236,7 +236,7 @@ def test_app_audio_cues_path() -> None:
             mock_cue.assert_called_with("start", enabled=True)
 
             mock_cue.reset_mock()
-            app._on_release()
+            app._on_hotkey_event("release")
             for _ in range(50):
                 if app.state == State.IDLE:
                     break
@@ -267,7 +267,10 @@ def test_app_on_cancel_queues_cancel() -> None:
 def test_coordinator_cancel_only_discards_if_recording() -> None:
     app = DictationApp()
     app.audio = MagicMock()
+    app.hook = MagicMock()
     app.state = State.RECORDING
+    app.continuous = True
+    app._record_started = time.monotonic()  # avoid continuous watchdog firing stop
 
     with patch("dictation.app.play_cue") as mock_cue, patch.object(app, "_refresh_icon"):
         coord_thread = threading.Thread(target=app._coordinator, daemon=True)
@@ -279,7 +282,9 @@ def test_coordinator_cancel_only_discards_if_recording() -> None:
                     break
                 time.sleep(0.02)
             assert app.state == State.IDLE
+            assert app.continuous is False
             assert app.audio.cancel.called
+            app.hook.set_continuous.assert_called_with(False)
             mock_cue.assert_called_with("discard", enabled=True)
 
             # Now in IDLE, putting another cancel should NOT call play_cue
