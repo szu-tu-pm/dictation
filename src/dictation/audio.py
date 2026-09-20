@@ -76,6 +76,13 @@ class RingBuffer:
             self.buf = new_buf
             self.n = new_n
 
+    def clear(self) -> None:
+        """Reset the buffer contents, write counter, and truncation events."""
+        with self._lock:
+            self.buf.fill(0)
+            self.total = 0
+            self.truncation_events = 0
+
     @property
     def write_total(self) -> int:
         with self._lock:
@@ -235,6 +242,8 @@ class AudioCapture:
         if new_device == self.device and self._stream is not None:
             return
         self.stop()
+        self.cancel()
+        self.ring.clear()
         self.device = new_device
         info = sd.query_devices(self.device)
         LOG.info(

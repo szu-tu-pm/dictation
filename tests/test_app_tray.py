@@ -121,10 +121,57 @@ def test_device_switch_failure_does_not_save_config(tmp_path, monkeypatch) -> No
     mock_audio.switch_device.side_effect = RuntimeError("Device unavailable")
     app.audio = mock_audio
 
-    with pytest.raises(RuntimeError, match="Device unavailable"), patch("dictation.app.save_config") as mock_save:
-        app._set_device(99)
+    with patch("dictation.app.save_config") as mock_save:
+        with pytest.raises(RuntimeError, match="Device unavailable"):
+            app._set_device(99)
         assert not mock_save.called
     assert app.cfg.device is None
+
+
+def test_device_menu_escapes_ampersand() -> None:
+    app = DictationApp()
+    with patch("dictation.app.list_wasapi_inputs", return_value=[(1, "Microphone (Realtek & USB)")]):
+        items = app._device_menu_items()
+        assert items[1].text == "Microphone (Realtek && USB)"
+
+
+def test_toggle_sound(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    app = DictationApp()
+    app.cfg.sound_effects = True
+    with patch("dictation.app.save_config") as mock_save:
+        app._toggle_sound()
+        assert app.cfg.sound_effects is False
+        assert mock_save.called
+
+        mock_save.reset_mock()
+        app._toggle_sound()
+        assert app.cfg.sound_effects is True
+        assert mock_save.called
+
+
+def test_audio_capture_switch_device_clears_ring_and_cancels() -> None:
+    import numpy as np
+    from dictation.audio import AudioCapture
+    from dictation.config import AppConfig
+
+    cfg = AppConfig()
+    audio = AudioCapture(cfg)
+    audio.ring.write(np.ones(1000, dtype=np.float32))
+    audio.mark_start()
+    assert audio.ring.write_total == 1000
+    assert audio._mark is not None
+
+    with (
+        patch("dictation.audio.find_wasapi_input", return_value=1),
+        patch("dictation.audio.sd.query_devices", return_value={"name": "New Mic"}),
+        patch.object(audio, "start"),
+        patch.object(audio, "stop"),
+    ):
+        audio.switch_device(1)
+        assert audio.ring.write_total == 0
+        assert audio._mark is None
+        assert audio.device == 1
 
 
 def test_device_switch_while_recording_cancels_take() -> None:
@@ -156,7 +203,7 @@ def test_toggle_mute_while_recording_cancels_take() -> None:
         mock_cue.assert_called_with("discard", enabled=app.cfg.sound_effects)
 
 
-def test_hook_set_enabled_false_while_down_cancels_not_releases() -> None:
+def test_hook_set_enabled_false_while_down_does_not_release() -> None:
     from dictation.hotkey import RightCtrlHook
     on_press = MagicMock()
     on_release = MagicMock()
@@ -168,5 +215,4 @@ def test_hook_set_enabled_false_while_down_cancels_not_releases() -> None:
 
     hook.set_enabled(False)
     assert hook.down is False
-    assert on_cancel.called
     assert not on_release.called

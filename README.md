@@ -52,12 +52,14 @@ python -m dictation
 1. Focus Notepad, VS Code, Discord, Slack, or any window that accepts text.
 2. **Hold Right Ctrl** and speak naturally.
 3. **Release Right Ctrl** — after a short transcription delay, text appears at the caret, with a trailing space so the next utterance continues the sentence.
-4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Transcribing…` (or `Muted`). Right-click the tray icon to switch microphones live, copy recent transcripts, mute dictation, or access configuration and logs.
+4. Tray tooltip shows `Idle (vulkan)` / `Recording 42%` / `Transcribing…` (or `Muted`). Right-click the tray icon to switch microphones live, copy recent transcripts, mute dictation, toggle sound effects, or access configuration and logs.
 
 **Key behavior:**
 - Right Ctrl is **swallowed** while held so it never reaches other programs. Typing S or W while talking will not trigger Save or Close Tab.
 - **Left Ctrl is untouched** — `Left Ctrl + S` still saves normally.
 - **Cancel take:** Press **Escape** while holding Right Ctrl to abort recording immediately without transcribing or pasting anything. (Escape cancels during active recording while holding the key, not once the key has been released and transcription is in-flight).
+- **Mute Dictation:** Temporarily disables hotkey recording for the current session (session-only; not persisted across app restarts).
+- **Recent Transcripts:** Clicking an entry in the Recent Transcripts submenu copies the text directly to your clipboard (overwriting current clipboard contents).
 - Accidental taps shorter than ~200 ms, or near-silent audio takes, are automatically ignored.
 
 ---

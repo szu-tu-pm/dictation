@@ -88,15 +88,11 @@ class RightCtrlHook:
             return self._enabled
 
     def set_enabled(self, enabled: bool) -> None:
-        cancel = False
         with self._down_lock:
             self._enabled = enabled
-            if not enabled and self._down:
+            if not enabled:
                 self._down = False
                 self._cancelling = False
-                cancel = True
-        if cancel and self._on_cancel is not None:
-            self._on_cancel()
 
     @property
     def down(self) -> bool:

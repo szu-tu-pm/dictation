@@ -121,7 +121,7 @@ class DictationApp:
         for idx, name in list_wasapi_inputs():
             items.append(
                 pystray.MenuItem(
-                    name,
+                    name.replace("&", "&&"),
                     (lambda i: lambda _: self._set_device(i))(idx),
                     checked=(lambda i: lambda _: self.cfg.device == i)(idx),
                     radio=True,
@@ -157,6 +157,11 @@ class DictationApp:
                 play_cue("discard", enabled=self.cfg.sound_effects)
         self._refresh_icon(update_menu=True)
 
+    def _toggle_sound(self, icon=None, item=None) -> None:  # noqa: ANN001
+        self.cfg.sound_effects = not self.cfg.sound_effects
+        save_config(self.cfg)
+        self._refresh_icon(update_menu=True)
+
     def _open_folder(self) -> None:
         if hasattr(os, "startfile"):
             os.startfile(appdata_dir())
@@ -180,6 +185,11 @@ class DictationApp:
             pystray.MenuItem("Microphone", pystray.Menu(self._device_menu_items)),
             pystray.MenuItem("Recent Transcripts", pystray.Menu(self._history_menu_items)),
             pystray.MenuItem("Mute Dictation", self._toggle_mute, checked=lambda _: self.muted),
+            pystray.MenuItem(
+                "Sound Effects",
+                self._toggle_sound,
+                checked=lambda _: self.cfg.sound_effects,
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Open Config Folder", lambda _: self._open_folder()),
             pystray.MenuItem("Edit Vocabulary", lambda _: self._open_vocabulary()),
