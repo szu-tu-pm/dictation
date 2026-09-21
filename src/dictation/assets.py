@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
 from pathlib import Path
 import urllib.request
 import zipfile
@@ -14,22 +15,77 @@ ProgressCb = Callable[[str, int, int], None]
 _UA = {"User-Agent": "Dictation/0.1 (Windows; local whisper.cpp)"}
 
 
-def download_file(url: str, dest: Path, progress: ProgressCb | None, label: str) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=120) as resp, tmp.open("wb") as out:
-        total = int(resp.headers.get("Content-Length") or 0)
-        got = 0
+def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
         while True:
-            chunk = resp.read(256 * 1024)
+            chunk = fh.read(chunk_size)
             if not chunk:
                 break
-            out.write(chunk)
-            got += len(chunk)
-            if progress:
-                progress(label, got, total)
-    tmp.replace(dest)
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_sha256(path: Path, expected: str) -> None:
+    """Raise RuntimeError if path's SHA-256 does not match expected (hex, case-insensitive)."""
+    expected = (expected or "").strip().lower()
+    if not expected:
+        return
+    got = sha256_file(path)
+    if got != expected:
+        raise RuntimeError(
+            f"SHA-256 mismatch for {path.name}: expected {expected}, got {got}"
+        )
+
+
+def download_file(
+    url: str,
+    dest: Path,
+    progress: ProgressCb | None,
+    label: str,
+    *,
+    expected_sha256: str = "",
+) -> str:
+    """Download to dest via a ``.part`` file. Returns SHA-256 of written bytes.
+
+    When ``expected_sha256`` is set, verifies before renaming; on mismatch the
+    partial file is deleted and RuntimeError is raised.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    digest = hashlib.sha256()
+    try:
+        req = urllib.request.Request(url, headers=_UA)
+        with urllib.request.urlopen(req, timeout=120) as resp, tmp.open("wb") as out:
+            total = int(resp.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = resp.read(256 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                digest.update(chunk)
+                got += len(chunk)
+                if progress:
+                    progress(label, got, total)
+        hexdigest = digest.hexdigest()
+        expected = (expected_sha256 or "").strip().lower()
+        if expected and hexdigest != expected:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"SHA-256 mismatch for {dest.name}: expected {expected}, got {hexdigest}"
+            )
+        tmp.replace(dest)
+        return hexdigest
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _safe_extract(zip_path: Path, dest: Path) -> None:
@@ -58,7 +114,13 @@ def ensure_engine(cfg: AppConfig, progress: ProgressCb | None = None) -> Path:
         return root
     zip_path = root / "whisper-vulkan-win-x64.zip"
     LOG.info("Downloading whisper.cpp Vulkan engine")
-    download_file(cfg.engine_url, zip_path, progress, "engine")
+    download_file(
+        cfg.engine_url,
+        zip_path,
+        progress,
+        "engine",
+        expected_sha256=cfg.engine_sha256,
+    )
     _safe_extract(zip_path, root)
     try:
         zip_path.unlink(missing_ok=True)
@@ -74,7 +136,13 @@ def ensure_model(cfg: AppConfig, progress: ProgressCb | None = None) -> Path:
     if path.is_file() and path.stat().st_size > 100_000_000:
         return path
     LOG.info("Downloading model %s", cfg.model_filename)
-    download_file(cfg.model_url, path, progress, "model")
+    download_file(
+        cfg.model_url,
+        path,
+        progress,
+        "model",
+        expected_sha256=cfg.model_sha256,
+    )
     if path.stat().st_size < 100_000_000:
         path.unlink(missing_ok=True)
         raise RuntimeError("model download looks truncated; try again")
