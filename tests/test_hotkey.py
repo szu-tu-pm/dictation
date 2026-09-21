@@ -218,9 +218,10 @@ def test_hook_start_raises_when_install_fails() -> None:
     with (
         patch("dictation.hotkey.kernel32.GetModuleHandleW", return_value=1),
         patch("dictation.hotkey.user32.SetWindowsHookExW", return_value=None),
-        patch("dictation.hotkey.kernel32.GetLastError", return_value=5),
+        patch("dictation.hotkey.get_last_error", return_value=5),
         patch("dictation.hotkey.kernel32.GetCurrentThreadId", return_value=42),
     ):
         with pytest.raises(RuntimeError, match="SetWindowsHookExW failed"):
             hook.start()
     assert hook._hook is None
+    assert hook._hook_error == 5

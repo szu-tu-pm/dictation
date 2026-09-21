@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
-from dictation.fileutil import atomic_write_text, quarantine_corrupt
+from dictation.fileutil import atomic_write_text, try_quarantine
 from dictation.logutil import LOG
 from dictation.paths import config_path
 
@@ -53,12 +53,7 @@ class AppConfig:
 
 def _recover_defaults(path: Path, reason: str) -> AppConfig:
     LOG.warning("config %s (%s); using defaults", path, reason)
-    if path.exists():
-        try:
-            bak = quarantine_corrupt(path)
-            LOG.warning("moved corrupt config to %s", bak)
-        except OSError:
-            LOG.exception("failed to quarantine corrupt config %s", path)
+    try_quarantine(path, "config")
     cfg = AppConfig()
     save_config(cfg)
     return cfg
