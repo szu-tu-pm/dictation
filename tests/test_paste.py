@@ -124,3 +124,17 @@ def test_paste_text_raises_when_uipi_blocks() -> None:
     ):
         paste_text("hello")
     assert not mock_unicode.called
+
+
+def test_send_ctrl_v_releases_modifiers_first() -> None:
+    calls: list[int] = []
+
+    def _capture(n, arr, size):  # noqa: ANN001
+        calls.append(int(n))
+        return n
+
+    with patch.object(paste_mod.user32, "SendInput", side_effect=_capture):
+        paste_mod._send_ctrl_v()
+
+    # First SendInput: 8 modifier key-ups; second: Ctrl+V chord (4 events).
+    assert calls == [8, 4]

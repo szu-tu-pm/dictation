@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from ctypes import CFUNCTYPE, POINTER, byref, windll, wintypes
+from ctypes import CFUNCTYPE, POINTER, WinDLL, byref, get_last_error, wintypes
 import ctypes
 
 from dictation.gestures import GestureClassifier
@@ -23,8 +23,9 @@ LRESULT = ctypes.c_ssize_t
 HHOOK = wintypes.HANDLE
 HOOKPROC = CFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
-user32 = windll.user32
-kernel32 = windll.kernel32
+# use_last_error=True so get_last_error() is reliable after SetWindowsHookExW.
+user32 = WinDLL("user32", use_last_error=True)
+kernel32 = WinDLL("kernel32", use_last_error=True)
 
 user32.SetWindowsHookExW.restype = HHOOK
 user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
@@ -38,7 +39,6 @@ user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WP
 kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
-kernel32.GetLastError.restype = wintypes.DWORD
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -84,6 +84,7 @@ class RightCtrlHook:
         self._enabled = True
         self._down_lock = threading.Lock()
         self._hook = None
+        self._hook_error = 0
         self._thread: threading.Thread | None = None
         self._thread_id = 0
         self._proc = HOOKPROC(self._ll_proc)
@@ -175,17 +176,24 @@ class RightCtrlHook:
         return int(user32.CallNextHookEx(self._hook, ncode, wparam, lparam) or 0)
 
     def start(self) -> None:
+        self._hook_error = 0
         self._thread = threading.Thread(target=self._loop, name="rctrl-hook", daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout=5):
             raise RuntimeError("Right Ctrl hook thread failed to start")
+        if not self._hook:
+            raise RuntimeError(
+                f"SetWindowsHookExW failed to install Right Ctrl hook "
+                f"(GetLastError={self._hook_error})"
+            )
 
     def _loop(self) -> None:
         self._thread_id = kernel32.GetCurrentThreadId()
         handle = kernel32.GetModuleHandleW(None)
         self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, handle, 0)
         if not self._hook:
-            LOG.error("SetWindowsHookExW failed: %s", kernel32.GetLastError())
+            self._hook_error = int(get_last_error())
+            LOG.error("SetWindowsHookExW failed: %s", self._hook_error)
             self._ready.set()
             return
         LOG.info("Right Ctrl low-level hook installed (swallowed)")

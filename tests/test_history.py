@@ -36,3 +36,24 @@ def test_record_dictation_swallows_oserror(tmp_path, monkeypatch) -> None:
         # Must not raise — paste already succeeded by the time history is written.
         record_dictation("hello")
     assert load_history() == []
+
+
+def test_load_history_quarantines_corrupt_json(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    path = history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not-json", encoding="utf-8")
+    assert load_history() == []
+    baks = sorted(path.parent.glob(path.name + ".*.bak"))
+    assert len(baks) == 1
+    assert baks[0].read_text(encoding="utf-8") == "{not-json"
+    assert not path.exists()
+
+
+def test_load_history_quarantines_non_list(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    path = history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"text": "x"}\n', encoding="utf-8")
+    assert load_history() == []
+    assert sorted(path.parent.glob(path.name + ".*.bak"))
