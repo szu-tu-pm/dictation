@@ -44,9 +44,9 @@ def test_load_history_quarantines_corrupt_json(tmp_path, monkeypatch) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not-json", encoding="utf-8")
     assert load_history() == []
-    bak = path.with_name(path.name + ".bak")
-    assert bak.is_file()
-    assert bak.read_text(encoding="utf-8") == "{not-json"
+    baks = sorted(path.parent.glob(path.name + ".*.bak"))
+    assert len(baks) == 1
+    assert baks[0].read_text(encoding="utf-8") == "{not-json"
     assert not path.exists()
 
 
@@ -56,4 +56,4 @@ def test_load_history_quarantines_non_list(tmp_path, monkeypatch) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"text": "x"}\n', encoding="utf-8")
     assert load_history() == []
-    assert path.with_name(path.name + ".bak").is_file()
+    assert sorted(path.parent.glob(path.name + ".*.bak"))

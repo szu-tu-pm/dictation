@@ -86,13 +86,34 @@ def test_download_file_writes_via_part_then_rename(tmp_path: Path) -> None:
     dest = tmp_path / "model.bin"
     payload = b"abc" * 1000
     progress = MagicMock()
+    expected = hashlib.sha256(payload).hexdigest()
 
     with patch("dictation.assets.urllib.request.urlopen", return_value=_FakeResp(payload)):
-        download_file("https://example.test/model.bin", dest, progress, "model")
+        got = download_file("https://example.test/model.bin", dest, progress, "model")
 
+    assert got == expected
     assert dest.read_bytes() == payload
     assert not dest.with_suffix(dest.suffix + ".part").exists()
     assert progress.called
+
+
+def test_download_file_streams_and_rejects_bad_checksum(tmp_path: Path) -> None:
+    dest = tmp_path / "model.bin"
+    payload = b"abc" * 1000
+    part = dest.with_suffix(dest.suffix + ".part")
+
+    with patch("dictation.assets.urllib.request.urlopen", return_value=_FakeResp(payload)):
+        with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+            download_file(
+                "https://example.test/model.bin",
+                dest,
+                None,
+                "model",
+                expected_sha256="0" * 64,
+            )
+
+    assert not dest.exists()
+    assert not part.exists()
 
 
 def test_download_file_cleans_part_on_failure(tmp_path: Path) -> None:
@@ -114,14 +135,11 @@ def test_download_file_cleans_part_on_failure(tmp_path: Path) -> None:
 def test_ensure_engine_rejects_bad_checksum(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("APPDATA", str(tmp_path))
     cfg = AppConfig(engine_sha256="a" * 64)
-    zip_bytes = _zip_bytes({"whisper.dll": b"x", "whisper-cli.exe": b"y"})
 
-    with patch("dictation.assets.download_file") as mock_dl:
-
-        def _fake_dl(url: str, dest: Path, progress, label: str) -> None:
-            dest.write_bytes(zip_bytes)
-
-        mock_dl.side_effect = _fake_dl
+    with patch(
+        "dictation.assets.download_file",
+        side_effect=RuntimeError("SHA-256 mismatch for whisper-vulkan-win-x64.zip"),
+    ):
         with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
             ensure_engine(cfg)
     zip_path = tmp_path / "Dictation" / "engine" / "whisper-vulkan-win-x64.zip"
@@ -137,8 +155,17 @@ def test_ensure_engine_extracts_when_checksum_ok(tmp_path, monkeypatch) -> None:
 
     with patch("dictation.assets.download_file") as mock_dl:
 
-        def _fake_dl(url: str, dest: Path, progress, label: str) -> None:
+        def _fake_dl(
+            url: str,
+            dest: Path,
+            progress,
+            label: str,
+            *,
+            expected_sha256: str = "",
+        ) -> str:
+            assert expected_sha256 == digest
             dest.write_bytes(zip_bytes)
+            return digest
 
         mock_dl.side_effect = _fake_dl
         root = ensure_engine(cfg)
@@ -151,12 +178,10 @@ def test_ensure_model_rejects_bad_checksum(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("APPDATA", str(tmp_path))
     cfg = AppConfig(model_sha256="b" * 64, model_filename="ggml-test.bin")
 
-    with patch("dictation.assets.download_file") as mock_dl:
-
-        def _fake_dl(url: str, dest: Path, progress, label: str) -> None:
-            dest.write_bytes(b"x" * 100_000_001)
-
-        mock_dl.side_effect = _fake_dl
+    with patch(
+        "dictation.assets.download_file",
+        side_effect=RuntimeError("SHA-256 mismatch for ggml-test.bin"),
+    ):
         with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
             ensure_model(cfg)
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from dictation.fileutil import atomic_write_text, quarantine_corrupt
+from dictation.fileutil import atomic_write_text, try_quarantine
 from dictation.logutil import LOG
 from dictation.paths import vocabulary_path
 
@@ -68,12 +68,7 @@ def _parse_replacements(raw: Any) -> list[Replacement]:
 
 def _recover_empty(path: Path, reason: str) -> Vocabulary:
     LOG.warning("vocabulary %s (%s); using empty vocabulary", path, reason)
-    if path.exists():
-        try:
-            bak = quarantine_corrupt(path)
-            LOG.warning("moved corrupt vocabulary to %s", bak)
-        except OSError:
-            LOG.exception("failed to quarantine corrupt vocabulary %s", path)
+    try_quarantine(path, "vocabulary")
     vocab = Vocabulary()
     save_vocabulary(vocab)
     return vocab

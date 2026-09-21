@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 from typing import Any
 
-from dictation.fileutil import atomic_write_text, quarantine_corrupt
+from dictation.fileutil import atomic_write_text, try_quarantine
 from dictation.logutil import LOG
 from dictation.paths import history_path
 
@@ -19,22 +19,14 @@ def load_history() -> list[dict[str, str]]:
         raw: Any = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         LOG.warning("history invalid JSON (%s); quarantining", exc)
-        try:
-            bak = quarantine_corrupt(path)
-            LOG.warning("moved corrupt history to %s", bak)
-        except OSError:
-            LOG.exception("failed to quarantine corrupt history %s", path)
+        try_quarantine(path, "history")
         return []
     except OSError as exc:
         LOG.warning("history read error (%s)", exc)
         return []
     if not isinstance(raw, list):
         LOG.warning("history JSON root is not a list; quarantining")
-        try:
-            bak = quarantine_corrupt(path)
-            LOG.warning("moved corrupt history to %s", bak)
-        except OSError:
-            LOG.exception("failed to quarantine corrupt history %s", path)
+        try_quarantine(path, "history")
         return []
     out: list[dict[str, str]] = []
     for item in raw:
