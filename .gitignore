@@ -6,3 +6,24 @@ dist/
 build/
 .pytest_cache/
 *.log
+
+# Audio recordings
+*.wav
+*.mp3
+*.flac
+*.ogg
+
+# Environment & secrets
+.env
+.env.*
+
+# IDE & OS artifacts
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Coverage & test artifacts
+.coverage
+htmlcov/
