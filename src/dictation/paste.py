@@ -118,9 +118,30 @@ class KEYBDINPUT(ctypes.Structure):
     ]
 
 
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", DWORD),
+        ("dwFlags", DWORD),
+        ("time", DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
 class INPUT(ctypes.Structure):
+    """Must match Win32 INPUT size (40 on x64). KEYBD-only unions make SendInput return 0."""
+
     class _I(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
+        _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
 
     _anonymous_ = ("i",)
     _fields_ = [("type", DWORD), ("i", _I)]
@@ -432,13 +453,11 @@ def paste_text(text: str) -> None:
     snapshot = _snapshot()
     try:
         _set_text(text)
-        hwnd = _focused_hwnd()
-        if _wm_paste(hwnd):
-            LOG.info("pasted via WM_PASTE hwnd=%s", hwnd)
-            return
-        LOG.warning("WM_PASTE failed or timed out; trying Ctrl+V")
+        # Prefer Ctrl+V: Chromium/Edge often accept WM_PASTE on a chrome HWND
+        # without inserting into the focused web content.
         _send_ctrl_v()
         _wait_paste_consumed()
+        LOG.info("pasted via clipboard Ctrl+V")
     except Exception:
         LOG.exception("clipboard paste failed")
         raise

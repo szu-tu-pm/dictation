@@ -82,7 +82,7 @@ See [TESTING.md](TESTING.md) for the manual hardware checklist and test breakdow
 
 ## How paste works
 
-Unicode `SendInput` is the primary path (typing characters directly at the caret, in 20-code-unit chunks). Your clipboard is **not touched or overwritten** on the happy path. If `SendInput` fails or is blocked, it falls back to snapshotting the previous clipboard, setting the transcript, sending `SendMessageTimeout(WM_PASTE)` or `Ctrl+V`, and restoring your previous clipboard in a `finally` block.
+Unicode `SendInput` is the primary path (typing characters directly at the caret, in 20-code-unit chunks). Your clipboard is **not touched or overwritten** on the happy path. If `SendInput` fails or is blocked, it falls back to snapshotting the previous clipboard, setting the transcript, sending `Ctrl+V`, and restoring your previous clipboard in a `finally` block.
 
 ---
 
@@ -101,7 +101,7 @@ Unicode `SendInput` is the primary path (typing characters directly at the caret
 | `hold_ms` | `250` | Hold threshold before Right Ctrl starts push-to-talk |
 | `double_tap_ms` | `350` | Window for double-tap → continuous mode |
 | `hud_enabled` | `true` | Show the floating bottom-center status pill |
-| `energy_threshold` | `0.008` | RMS energy floor to drop silent takes |
+| `energy_threshold` | `0.002` | RMS floor; takes also need peak &lt; 4× this to be dropped as silence |
 | `model_filename` | `ggml-large-v3-turbo.bin` | ggml file under `models\` |
 | `sound_effects` | `true` | Subtle audio cues (earcons) on start, stop, paste, and discard |
 

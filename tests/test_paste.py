@@ -1,4 +1,5 @@
 import sys
+from ctypes import sizeof
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -56,6 +57,11 @@ def test_send_unicode_keeps_surrogate_pair_in_one_chunk() -> None:
         assert second_n == 4  # high+low surrogate, down+up each
 
 
+def test_input_struct_matches_win64_sendinput() -> None:
+    """KEYBD-only INPUT unions are 32 bytes; Win64 SendInput requires 40."""
+    assert sizeof(paste_mod.INPUT) >= 40
+
+
 def test_paste_text_send_unicode_primary_path() -> None:
     with (
         patch("dictation.paste._send_unicode", return_value=10) as mock_unicode,
@@ -71,36 +77,18 @@ def test_paste_text_send_unicode_primary_path() -> None:
         assert not mock_restore.called
 
 
-def test_paste_text_fallback_to_wm_paste() -> None:
+def test_paste_text_fallback_to_ctrl_v() -> None:
     with (
         patch("dictation.paste._send_unicode", return_value=0),
         patch("dictation.paste._snapshot", return_value={13: b"abc"}) as mock_snap,
         patch("dictation.paste._set_text") as mock_set,
-        patch("dictation.paste._focused_hwnd", return_value=1234),
-        patch("dictation.paste._wm_paste", return_value=True) as mock_wm,
-        patch("dictation.paste._send_ctrl_v") as mock_ctrl_v,
-        patch("dictation.paste._restore") as mock_restore,
-    ):
-        paste_text("test sentence")
-        assert mock_snap.called
-        assert mock_set.called
-        assert mock_wm.called
-        assert not mock_ctrl_v.called
-        mock_restore.assert_called_once_with({13: b"abc"})
-
-
-def test_paste_text_fallback_to_ctrl_v() -> None:
-    with (
-        patch("dictation.paste._send_unicode", return_value=0),
-        patch("dictation.paste._snapshot", return_value={13: b"abc"}),
-        patch("dictation.paste._set_text"),
-        patch("dictation.paste._focused_hwnd", return_value=1234),
-        patch("dictation.paste._wm_paste", return_value=False),
         patch("dictation.paste._send_ctrl_v") as mock_ctrl_v,
         patch("dictation.paste._wait_paste_consumed") as mock_wait,
         patch("dictation.paste._restore") as mock_restore,
     ):
         paste_text("test sentence")
+        assert mock_snap.called
+        assert mock_set.called
         assert mock_ctrl_v.called
         assert mock_wait.called
         mock_restore.assert_called_once_with({13: b"abc"})

@@ -5,6 +5,7 @@ import time
 from dictation.hud import (
     HudFrame,
     HudOverlay,
+    _bind_hud_win32,
     map_app_state,
     pill_size,
     render_pill,
@@ -45,7 +46,22 @@ def test_render_pill_modes() -> None:
     assert ok is not None
 
 
-def test_hud_overlay_disabled_is_noop() -> None:
+def test_bind_hud_win32_pointer_sized_handles() -> None:
+    """Win64 HDCs/LPARAMs exceed 32-bit; argtypes must accept them."""
+    import ctypes
+    import sys
+
+    if sys.platform != "win32":
+        return
+    user32, gdi32, _kernel32 = _bind_hud_win32()
+    big = 0x000001A326A44250  # typical high pointer from the OverflowError log
+    # Must not raise OverflowError (the previous default c_int path did).
+    gdi32.CreateCompatibleDC.argtypes[0].from_param(big)
+    user32.ReleaseDC.argtypes[1].from_param(big)
+    gdi32.SelectObject.argtypes[1].from_param(big)
+    user32.DefWindowProcW.argtypes[3].from_param(big)
+    assert user32.DefWindowProcW.restype is ctypes.c_ssize_t
+
     hud = HudOverlay(enabled=False)
     hud.start()
     hud.update("recording", level=0.5)
