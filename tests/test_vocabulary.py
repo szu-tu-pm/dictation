@@ -56,13 +56,13 @@ def test_prompt_truncates_at_comma() -> None:
 def test_vocabulary_roundtrip(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("APPDATA", str(tmp_path))
     vocab = Vocabulary(
-        words=["Dictation"],
+        words=["Kubernetes"],
         replacements=[Replacement(heard="wisper", meant="Whisper")],
     )
     save_vocabulary(vocab)
     assert vocabulary_path() == tmp_path / "Dictation" / "vocabulary.json"
     loaded = load_vocabulary()
-    assert loaded.words == ["Dictation"]
+    assert loaded.words == ["Kubernetes"]
     assert loaded.replacements[0].meant == "Whisper"
 
 

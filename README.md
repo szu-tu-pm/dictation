@@ -109,7 +109,7 @@ Names and jargon live in `%APPDATA%\Dictation\vocabulary.json` (created on first
 
 ```json
 {
-  "words": ["Dictation", "Cursor", "Vulkan"],
+  "words": ["Kubernetes", "Cursor", "Vulkan"],
   "replacements": [
     {"heard": "wisper", "meant": "Whisper"}
   ]
