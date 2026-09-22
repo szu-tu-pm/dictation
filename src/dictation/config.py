@@ -36,7 +36,7 @@ class AppConfig:
     preroll_ms: int = 350
     suffix_ms: int = 80
     min_hold_ms: int = 200
-    energy_threshold: float = 0.008
+    energy_threshold: float = 0.002
     ring_seconds: float = 30.0
     max_record_seconds: float = 60.0
     continuous_max_seconds: float = 120.0
