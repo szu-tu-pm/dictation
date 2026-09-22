@@ -59,12 +59,12 @@ def test_rms_zero_and_ones() -> None:
 
 def test_too_quiet_short_clip() -> None:
     samples = np.zeros(100, dtype=np.float32)
-    assert too_quiet(samples, threshold=0.008, min_samples=3200)
+    assert too_quiet(samples, threshold=0.002, min_samples=3200)
 
 
 def test_too_quiet_silence() -> None:
     samples = np.zeros(4000, dtype=np.float32)
-    assert too_quiet(samples, threshold=0.008, min_samples=3200)
+    assert too_quiet(samples, threshold=0.002, min_samples=3200)
 
 
 def test_capture_level_rises(monkeypatch) -> None:
@@ -89,7 +89,15 @@ def test_capture_level_rises(monkeypatch) -> None:
 def test_too_quiet_speech_like() -> None:
     rng = np.random.default_rng(0)
     samples = rng.normal(0, 0.1, 4000).astype(np.float32)
-    assert not too_quiet(samples, threshold=0.008, min_samples=3200)
+    assert not too_quiet(samples, threshold=0.002, min_samples=3200)
+
+
+def test_too_quiet_allows_quiet_but_peaked_speech() -> None:
+    """Real mic levels from a soft take: rms~0.002 peak~0.027 must still transcribe."""
+    rng = np.random.default_rng(1)
+    samples = (rng.normal(0, 0.002, 16000) * 0.5).astype(np.float32)
+    samples[8000:8040] = 0.027  # brief peak like a soft consonant
+    assert not too_quiet(samples, threshold=0.002, min_samples=3200)
 
 
 def test_audio_capture_cancel(monkeypatch) -> None:

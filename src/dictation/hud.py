@@ -97,6 +97,118 @@ def render_pill(frame: HudFrame) -> Image.Image | None:
     return img
 
 
+def _bind_hud_win32():
+    """Bind user32/gdi32/kernel32 with pointer-sized HANDLE/LPARAM types (Win64-safe)."""
+    import ctypes
+    from ctypes import POINTER, wintypes
+
+    # windll caches DLLs; set argtypes once so later calls stay correct.
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    kernel32 = ctypes.windll.kernel32
+
+    LRESULT = ctypes.c_ssize_t
+    HDC = wintypes.HDC
+    HBITMAP = wintypes.HBITMAP
+    HWND = wintypes.HWND
+    HGDIOBJ = wintypes.HGDIOBJ
+    COLORREF = wintypes.COLORREF
+
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
+    kernel32.GetLastError.argtypes = []
+    kernel32.GetLastError.restype = wintypes.DWORD
+
+    user32.DefWindowProcW.argtypes = [HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.DefWindowProcW.restype = LRESULT
+    user32.RegisterClassW.argtypes = [ctypes.c_void_p]
+    user32.RegisterClassW.restype = wintypes.ATOM
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        HWND,
+        wintypes.HMENU,
+        wintypes.HINSTANCE,
+        ctypes.c_void_p,
+    ]
+    user32.CreateWindowExW.restype = HWND
+    user32.ShowWindow.argtypes = [HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [
+        HWND,
+        HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
+    ]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.DestroyWindow.argtypes = [HWND]
+    user32.DestroyWindow.restype = wintypes.BOOL
+    user32.GetDC.argtypes = [HWND]
+    user32.GetDC.restype = HDC
+    user32.ReleaseDC.argtypes = [HWND, HDC]
+    user32.ReleaseDC.restype = ctypes.c_int
+    user32.UpdateLayeredWindow.argtypes = [
+        HWND,
+        HDC,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        HDC,
+        ctypes.c_void_p,
+        COLORREF,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    user32.UpdateLayeredWindow.restype = wintypes.BOOL
+    user32.SystemParametersInfoW.argtypes = [
+        wintypes.UINT,
+        wintypes.UINT,
+        ctypes.c_void_p,
+        wintypes.UINT,
+    ]
+    user32.SystemParametersInfoW.restype = wintypes.BOOL
+    user32.PeekMessageW.argtypes = [
+        POINTER(wintypes.MSG),
+        HWND,
+        wintypes.UINT,
+        wintypes.UINT,
+        wintypes.UINT,
+    ]
+    user32.PeekMessageW.restype = wintypes.BOOL
+    user32.TranslateMessage.argtypes = [POINTER(wintypes.MSG)]
+    user32.TranslateMessage.restype = wintypes.BOOL
+    user32.DispatchMessageW.argtypes = [POINTER(wintypes.MSG)]
+    user32.DispatchMessageW.restype = LRESULT
+
+    gdi32.CreateCompatibleDC.argtypes = [HDC]
+    gdi32.CreateCompatibleDC.restype = HDC
+    gdi32.CreateDIBSection.argtypes = [
+        HDC,
+        ctypes.c_void_p,
+        wintypes.UINT,
+        POINTER(ctypes.c_void_p),
+        wintypes.HANDLE,
+        wintypes.DWORD,
+    ]
+    gdi32.CreateDIBSection.restype = HBITMAP
+    gdi32.SelectObject.argtypes = [HDC, HGDIOBJ]
+    gdi32.SelectObject.restype = HGDIOBJ
+    gdi32.DeleteObject.argtypes = [HGDIOBJ]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    gdi32.DeleteDC.argtypes = [HDC]
+    gdi32.DeleteDC.restype = wintypes.BOOL
+
+    return user32, gdi32, kernel32
+
+
 class HudOverlay:
     """Bottom-center layered pill. No-op when disabled or Win32 is unavailable."""
 
@@ -109,6 +221,9 @@ class HudOverlay:
         self._transcribe_started = 0.0
         self._success_until = 0.0
         self._hwnd = None
+        self._user32 = None
+        self._gdi32 = None
+        self._ctypes = None
         self._available = False
 
     def start(self) -> None:
@@ -229,7 +344,7 @@ class HudOverlay:
         import ctypes
         from ctypes import wintypes
 
-        user32 = ctypes.windll.user32
+        user32, gdi32, kernel32 = _bind_hud_win32()
         WS_POPUP = 0x80000000
         WS_EX_LAYERED = 0x00080000
         WS_EX_TOOLWINDOW = 0x00000080
@@ -240,8 +355,10 @@ class HudOverlay:
         SWP_NOACTIVATE = 0x0010
         SW_HIDE = 0
 
+        # LRESULT is pointer-sized; c_long truncates on Win64 and overflows LPARAM.
+        LRESULT = ctypes.c_ssize_t
         WNDPROC = ctypes.WINFUNCTYPE(
-            ctypes.c_long, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+            LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
         )
 
         class WNDCLASS(ctypes.Structure):
@@ -263,7 +380,7 @@ class HudOverlay:
 
         # Keep a strong reference so the callback is not GC'd.
         self._wnd_proc = WNDPROC(_wnd_proc)
-        hinst = ctypes.windll.kernel32.GetModuleHandleW(None)
+        hinst = kernel32.GetModuleHandleW(None)
         class_name = "DictationHudPill"
         wc = WNDCLASS()
         wc.style = 0
@@ -279,7 +396,7 @@ class HudOverlay:
         atom = user32.RegisterClassW(ctypes.byref(wc))
         if not atom:
             # Already registered from a previous run in-process is fine.
-            err = ctypes.windll.kernel32.GetLastError()
+            err = kernel32.GetLastError()
             if err not in (0, 1410):  # ERROR_CLASS_ALREADY_EXISTS
                 raise OSError(f"RegisterClassW failed: {err}")
 
@@ -299,9 +416,10 @@ class HudOverlay:
             None,
         )
         if not hwnd:
-            raise OSError(f"CreateWindowExW failed: {ctypes.windll.kernel32.GetLastError()}")
+            raise OSError(f"CreateWindowExW failed: {kernel32.GetLastError()}")
         self._hwnd = hwnd
         self._user32 = user32
+        self._gdi32 = gdi32
         self._ctypes = ctypes
         user32.ShowWindow(hwnd, SW_HIDE)
         user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | 0x0001 | 0x0002)
@@ -322,7 +440,8 @@ class HudOverlay:
             ]
 
         rc = RECT()
-        ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rc), 0)
+        user32 = self._user32 or _bind_hud_win32()[0]
+        user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rc), 0)
         return (rc.left, rc.top, rc.right, rc.bottom)
 
     def _paint(self, frame: HudFrame) -> None:
@@ -330,6 +449,7 @@ class HudOverlay:
             return
         img = render_pill(frame)
         user32 = self._user32
+        gdi32 = self._gdi32
         ctypes = self._ctypes
         if img is None:
             user32.ShowWindow(self._hwnd, 0)  # SW_HIDE
@@ -345,13 +465,6 @@ class HudOverlay:
             bgra[i + 1] = (g * a) // 255
             bgra[i + 2] = (r * a) // 255
             bgra[i + 3] = a
-
-        gdi32 = ctypes.windll.gdi32
-        # 64-bit: default c_int restype truncates HDC/HBITMAP handles.
-        user32.GetDC.restype = ctypes.c_void_p
-        gdi32.CreateCompatibleDC.restype = ctypes.c_void_p
-        gdi32.CreateDIBSection.restype = ctypes.c_void_p
-        gdi32.SelectObject.restype = ctypes.c_void_p
 
         hdc_screen = None
         hdc_mem = None
@@ -441,7 +554,7 @@ class HudOverlay:
         from ctypes import wintypes
 
         msg = wintypes.MSG()
-        user32 = ctypes.windll.user32
+        user32 = self._user32 or _bind_hud_win32()[0]
         while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):  # PM_REMOVE
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))

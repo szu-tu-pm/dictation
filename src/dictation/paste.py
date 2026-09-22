@@ -18,8 +18,6 @@ HANDLE = wintypes.HANDLE
 CF_TEXT = 1
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
-WM_PASTE = 0x0302
-SMTO_ABORTIFHUNG = 0x0002
 INPUT_KEYBOARD = 1
 KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_KEYUP = 0x0002
@@ -54,14 +52,6 @@ user32.GetForegroundWindow.argtypes = []
 user32.GetForegroundWindow.restype = HWND
 user32.GetWindowThreadProcessId.argtypes = [HWND, POINTER(DWORD)]
 user32.GetWindowThreadProcessId.restype = DWORD
-user32.AttachThreadInput.argtypes = [DWORD, DWORD, BOOL]
-user32.AttachThreadInput.restype = BOOL
-user32.GetGUIThreadInfo.argtypes = [DWORD, c_void_p]
-user32.GetGUIThreadInfo.restype = BOOL
-user32.SendMessageTimeoutW.argtypes = [
-    HWND, UINT, wintypes.WPARAM, wintypes.LPARAM, UINT, UINT, POINTER(ctypes.c_size_t)
-]
-user32.SendMessageTimeoutW.restype = ctypes.c_size_t
 user32.SendInput.argtypes = [UINT, c_void_p, ctypes.c_int]
 user32.SendInput.restype = UINT
 
@@ -75,7 +65,6 @@ kernel32.GlobalSize.argtypes = [HANDLE]
 kernel32.GlobalSize.restype = ctypes.c_size_t
 kernel32.GlobalFree.argtypes = [HANDLE]
 kernel32.GlobalFree.restype = HANDLE
-kernel32.GetCurrentThreadId.restype = DWORD
 kernel32.GetCurrentProcessId.restype = DWORD
 kernel32.OpenProcess.argtypes = [DWORD, BOOL, DWORD]
 kernel32.OpenProcess.restype = HANDLE
@@ -83,29 +72,6 @@ kernel32.CloseHandle.argtypes = [HANDLE]
 kernel32.CloseHandle.restype = BOOL
 
 SKIP_FORMATS = {2, 3, 8, 9, 14}  # bitmaps / palette / metafiles
-
-
-class RECT(ctypes.Structure):
-    _fields_ = [
-        ("left", wintypes.LONG),
-        ("top", wintypes.LONG),
-        ("right", wintypes.LONG),
-        ("bottom", wintypes.LONG),
-    ]
-
-
-class GUITHREADINFO(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", DWORD),
-        ("flags", DWORD),
-        ("hwndActive", HWND),
-        ("hwndFocus", HWND),
-        ("hwndCapture", HWND),
-        ("hwndMenuOwner", HWND),
-        ("hwndMoveSize", HWND),
-        ("hwndCaret", HWND),
-        ("rcCaret", RECT),
-    ]
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -118,9 +84,30 @@ class KEYBDINPUT(ctypes.Structure):
     ]
 
 
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", DWORD),
+        ("dwFlags", DWORD),
+        ("time", DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
 class INPUT(ctypes.Structure):
+    """Must match Win32 INPUT size (40 on x64). KEYBD-only unions make SendInput return 0."""
+
     class _I(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
+        _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
 
     _anonymous_ = ("i",)
     _fields_ = [("type", DWORD), ("i", _I)]
@@ -209,27 +196,6 @@ def _set_text(text: str) -> None:
         user32.CloseClipboard()
 
 
-def _focused_hwnd() -> int:
-    fg = user32.GetForegroundWindow()
-    if not fg:
-        return 0
-    pid = DWORD(0)
-    tid = user32.GetWindowThreadProcessId(fg, byref(pid))
-    our = kernel32.GetCurrentThreadId()
-    attached = False
-    if tid and tid != our:
-        attached = bool(user32.AttachThreadInput(our, tid, True))
-    try:
-        info = GUITHREADINFO()
-        info.cbSize = sizeof(GUITHREADINFO)
-        if user32.GetGUIThreadInfo(tid, byref(info)) and info.hwndFocus:
-            return int(info.hwndFocus)
-        return int(fg)
-    finally:
-        if attached:
-            user32.AttachThreadInput(our, tid, False)
-
-
 def _token_elevated(token: HANDLE) -> bool | None:
     """Return True/False for TokenElevation, or None if the query fails."""
     TokenElevation = 20
@@ -286,16 +252,6 @@ def _uipi_blocks_paste() -> bool:
     if ours is None or theirs is None:
         return False
     return (not ours) and theirs
-
-
-def _wm_paste(hwnd: int, timeout_ms: int = 200) -> bool:
-    if not hwnd:
-        return False
-    result = ctypes.c_size_t(0)
-    sent = user32.SendMessageTimeoutW(
-        hwnd, WM_PASTE, 0, 0, SMTO_ABORTIFHUNG, timeout_ms, byref(result)
-    )
-    return bool(sent)
 
 
 UNICODE_CHUNK = 20
@@ -432,13 +388,11 @@ def paste_text(text: str) -> None:
     snapshot = _snapshot()
     try:
         _set_text(text)
-        hwnd = _focused_hwnd()
-        if _wm_paste(hwnd):
-            LOG.info("pasted via WM_PASTE hwnd=%s", hwnd)
-            return
-        LOG.warning("WM_PASTE failed or timed out; trying Ctrl+V")
+        # Prefer Ctrl+V: Chromium/Edge often accept WM_PASTE on a chrome HWND
+        # without inserting into the focused web content.
         _send_ctrl_v()
         _wait_paste_consumed()
+        LOG.info("pasted via clipboard Ctrl+V")
     except Exception:
         LOG.exception("clipboard paste failed")
         raise

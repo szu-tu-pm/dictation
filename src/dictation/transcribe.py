@@ -164,6 +164,8 @@ def too_quiet(samples: np.ndarray, threshold: float, min_samples: int) -> bool:
         return True
     energy = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
     peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+    # Skip only when both RMS and peak look like silence / key-tap noise.
+    # Quiet speech often has low RMS but a usable peak.
     return energy < threshold and peak < threshold * 4
 
 
@@ -220,7 +222,15 @@ class WhisperEngine:
             return None
         min_samples = int(self.cfg.sample_rate * self.cfg.min_hold_ms / 1000)
         if not skip_gate and too_quiet(samples, self.cfg.energy_threshold, min_samples):
-            LOG.info("skipping quiet/short capture (%s samples)", samples.size)
+            energy = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
+            peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+            LOG.info(
+                "skipping quiet/short capture (%s samples rms=%.4f peak=%.4f threshold=%.4f)",
+                samples.size,
+                energy,
+                peak,
+                self.cfg.energy_threshold,
+            )
             return None
         if self._impl is None:
             raise RuntimeError("engine not loaded")
