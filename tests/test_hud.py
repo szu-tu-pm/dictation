@@ -62,6 +62,8 @@ def test_bind_hud_win32_pointer_sized_handles() -> None:
     user32.DefWindowProcW.argtypes[3].from_param(big)
     assert user32.DefWindowProcW.restype is ctypes.c_ssize_t
 
+
+def test_hud_overlay_disabled_is_noop() -> None:
     hud = HudOverlay(enabled=False)
     hud.start()
     hud.update("recording", level=0.5)
